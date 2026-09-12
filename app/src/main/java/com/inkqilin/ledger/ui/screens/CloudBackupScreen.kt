@@ -16,15 +16,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,10 +30,8 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -71,17 +66,20 @@ private sealed class BackupUiState {
     data class Success(val message: String) : BackupUiState()
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 云备份二级页。标题与返回由 [MainScreen] 顶栏提供，
+ * 右上角 COS 设置由顶栏齿轮通过 [openSettings] / [onOpenSettingsConsumed] 驱动。
+ */
 @Composable
 fun CloudBackupScreen(
     viewModel: TransactionViewModel,
-    onBack: () -> Unit
+    openSettings: Boolean,
+    onOpenSettingsConsumed: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cosConfig by viewModel.cosConfig.collectAsState()
 
-    var showSettings by remember { mutableStateOf(false) }
     var backups by remember { mutableStateOf<List<CosObjectMeta>>(emptyList()) }
     var uiState by remember { mutableStateOf<BackupUiState>(BackupUiState.Idle) }
     var isLoadingList by remember { mutableStateOf(false) }
@@ -112,29 +110,12 @@ fun CloudBackupScreen(
         if (cosConfig.isConfigured) refreshList()
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("云备份") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "COS 设置")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp)
-        ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .padding(top = 8.dp)
+    ) {
             // 状态卡
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -183,7 +164,7 @@ fun CloudBackupScreen(
                         Button(
                             onClick = {
                                 if (!cosConfig.isConfigured) {
-                                    showSettings = true
+                                    uiState = BackupUiState.Error("请先点右上角齿轮配置 COS")
                                     return@Button
                                 }
                                 uiState = BackupUiState.Working
@@ -286,15 +267,14 @@ fun CloudBackupScreen(
                 }
             }
         }
-    }
 
-    if (showSettings) {
+    if (openSettings) {
         CosSettingsDialog(
             initial = cosConfig,
-            onDismiss = { showSettings = false },
+            onDismiss = { onOpenSettingsConsumed() },
             onSave = { config ->
                 viewModel.setCosConfig(config)
-                showSettings = false
+                onOpenSettingsConsumed()
                 uiState = BackupUiState.Success("COS 配置已保存")
             }
         )

@@ -176,6 +176,7 @@ fun MainScreen(
         currentRoute == "currency_management" -> "币种卡片管理"
         currentRoute == "keyword_category_management" -> "关键词管理"
         currentRoute == "ai_config" -> "AI API 配置"
+        currentRoute == "cloud_backup" -> "云备份"
         currentRoute == "ocr_batch_recognition" -> "OCR 批量识别"
         currentRoute == "asset_management" -> "资产管理"
         currentRoute?.startsWith("cycle_bill_edit") == true -> {
@@ -197,6 +198,7 @@ fun MainScreen(
     // 子页面可覆盖的 TopAppBar 状态
     var customTopBarTitle by remember { mutableStateOf<String?>(null) }
     var customBackAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var cloudBackupOpenSettings by remember { mutableStateOf(false) }
     var albumFabTrigger by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val ocrEnabled by viewModel.ocrEnabled.collectAsState()
@@ -282,6 +284,16 @@ fun MainScreen(
                         ) {
                             IconButton(onClick = { navController.navigate("add_renqing_event") }) {
                                 Icon(Icons.Default.Add, contentDescription = "添加事件")
+                            }
+                        }
+                        // 云备份：COS 设置
+                        AnimatedVisibility(
+                            visible = currentRoute == "cloud_backup",
+                            enter = if (enableAnimations) fadeIn(MotionSprings.interactive()) else EnterTransition.None,
+                            exit = if (enableAnimations) fadeOut(MotionSprings.interactive()) else ExitTransition.None
+                        ) {
+                            IconButton(onClick = { cloudBackupOpenSettings = true }) {
+                                Icon(Icons.Default.Settings, contentDescription = "COS 设置")
                             }
                         }
                     }
@@ -687,8 +699,12 @@ fun MainScreen(
             composable("cloud_backup") {
                 CloudBackupScreen(
                     viewModel = viewModel,
-                    onBack = { navController.popBackStack() }
+                    openSettings = cloudBackupOpenSettings,
+                    onOpenSettingsConsumed = { cloudBackupOpenSettings = false }
                 )
+                DisposableEffect(Unit) {
+                    onDispose { cloudBackupOpenSettings = false }
+                }
             }
             composable("asset_management") {
                 AssetManagementScreen(
