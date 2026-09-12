@@ -739,12 +739,15 @@ fun SettingsScreen(
         val checkUpdateEnabled by viewModel.checkUpdateEnabled.collectAsState()
         val updateProxyUrl by viewModel.updateProxyUrl.collectAsState()
         val updateRepo by viewModel.updateRepo.collectAsState()
+        val githubRepo by viewModel.githubRepo.collectAsState()
         val proxyOptions = com.inkqilin.ledger.util.PROXY_SOURCES + "自定义"
         var showProxyDropdown by remember { mutableStateOf(false) }
         var showCustomProxyInput by remember { mutableStateOf(false) }
         var customProxyUrl by remember { mutableStateOf("") }
         var showUpdateRepoDialog by remember { mutableStateOf(false) }
         var updateRepoInput by remember { mutableStateOf(updateRepo) }
+        var showGithubRepoDialog by remember { mutableStateOf(false) }
+        var githubRepoInput by remember { mutableStateOf(githubRepo) }
 
         SettingsSectionHeader("更新检测", if (checkUpdateEnabled) "启动时自动检查" else "已关闭", updateSectionExpanded) { updateSectionExpanded = !updateSectionExpanded }
         AnimatedVisibility(visible = updateSectionExpanded) {
@@ -761,10 +764,20 @@ fun SettingsScreen(
                 ListItem(
                     headlineContent = { Text("更新检测仓库") },
                     supportingContent = { Text("Gitee: $updateRepo", maxLines = 2, fontSize = 12.sp) },
-                    leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
+                    leadingContent = { Icon(Icons.Default.Edit, contentDescription = null) },
                     modifier = Modifier.clickable {
                         updateRepoInput = updateRepo
                         showUpdateRepoDialog = true
+                    }
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                ListItem(
+                    headlineContent = { Text("GitHub 下载仓库") },
+                    supportingContent = { Text("GitHub: $githubRepo", maxLines = 2, fontSize = 12.sp) },
+                    leadingContent = { Icon(Icons.Default.Share, contentDescription = null) },
+                    modifier = Modifier.clickable {
+                        githubRepoInput = githubRepo
+                        showGithubRepoDialog = true
                     }
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -890,6 +903,53 @@ fun SettingsScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showUpdateRepoDialog = false }) { Text("取消") }
+                }
+            )
+        }
+
+        // GitHub 下载仓库对话框
+        if (showGithubRepoDialog) {
+            AlertDialog(
+                onDismissRequest = { showGithubRepoDialog = false },
+                title = { Text("GitHub 下载仓库") },
+                text = {
+                    Column {
+                        Text(
+                            "填写 GitHub 仓库路径，用于「GitHub 仓库」和「代理」下载源。",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "默认: ${com.inkqilin.ledger.util.DEFAULT_GITHUB_REPO}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = githubRepoInput,
+                            onValueChange = { githubRepoInput = it },
+                            placeholder = { Text("Niriko-mu/InkQilin-ledger") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val raw = githubRepoInput.trim()
+                        val normalized = com.inkqilin.ledger.util.normalizeGithubRepo(raw)
+                        if (normalized.isBlank()) {
+                            Toast.makeText(context, "路径不能为空", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.setGithubRepo(normalized)
+                            Toast.makeText(context, "已保存: $normalized", Toast.LENGTH_SHORT).show()
+                            showGithubRepoDialog = false
+                        }
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showGithubRepoDialog = false }) { Text("取消") }
                 }
             )
         }

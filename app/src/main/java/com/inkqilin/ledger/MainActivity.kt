@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val checkUpdateEnabled by viewModel.checkUpdateEnabled.collectAsState()
                     val updateRepo by viewModel.updateRepo.collectAsState()
+                    val githubRepo by viewModel.githubRepo.collectAsState()
                     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
                     var enableStartupAnimations by remember { mutableStateOf(false) }
                     val context = LocalContext.current
@@ -315,7 +316,8 @@ class MainActivity : ComponentActivity() {
                                                         versionName = info.versionName,
                                                         source = source,
                                                         proxyPrefix = effectiveProxy,
-                                                        giteeRepo = updateRepo
+                                                        giteeRepo = updateRepo,
+                                                        githubRepo = githubRepo
                                                     ).collect { progress ->
                                                         when (progress) {
                                                             is DownloadProgress.Progress ->

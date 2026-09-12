@@ -320,8 +320,17 @@ class TransactionViewModel(
         com.inkqilin.ledger.util.DEFAULT_UPDATE_REPO
     )
 
+    val githubRepo: StateFlow<String> = themeManager.githubRepo.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000),
+        com.inkqilin.ledger.util.DEFAULT_GITHUB_REPO
+    )
+
     fun setUpdateRepo(repo: String) {
         viewModelScope.launch { themeManager.setUpdateRepo(repo) }
+    }
+
+    fun setGithubRepo(repo: String) {
+        viewModelScope.launch { themeManager.setGithubRepo(repo) }
     }
 
     /** 设置页「检查更新」→ MainActivity 弹出更新对话框 */

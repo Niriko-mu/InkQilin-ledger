@@ -36,8 +36,11 @@ val PROXY_SOURCES = listOf(
     "https://cdn.gh-proxy.org/"
 )
 
-private const val GITHUB_RELEASE_BASE =
-    "https://github.com/Niriko-mu/InkQilin-ledger/releases/download"
+/** 构建 GitHub Release 下载基址；repo 支持 owner/repo 或完整地址 */
+fun buildGithubReleaseBase(repo: String): String {
+    val path = normalizeGithubRepo(repo).ifBlank { DEFAULT_GITHUB_REPO }
+    return "https://github.com/$path/releases/download"
+}
 
 /** 构建 Gitee Release 下载基址；repo 支持 owner/repo 或完整地址 */
 fun buildGiteeReleaseBase(repo: String): String {
@@ -66,16 +69,17 @@ object AppUpdateDownloader {
         versionName: String,
         source: DownloadSource,
         proxyPrefix: String? = null,
-        giteeRepo: String = DEFAULT_UPDATE_REPO
+        giteeRepo: String = DEFAULT_UPDATE_REPO,
+        githubRepo: String = DEFAULT_GITHUB_REPO
     ): String {
         val tag = "V$versionName"
         val fileName = "$APK_FILE_PREFIX$versionName.apk"
         val base = when (source) {
             DownloadSource.GITEE -> buildGiteeReleaseBase(giteeRepo)
-            DownloadSource.GITHUB -> GITHUB_RELEASE_BASE
+            DownloadSource.GITHUB -> buildGithubReleaseBase(githubRepo)
             DownloadSource.PROXY -> {
                 val prefix = proxyPrefix ?: PROXY_SOURCES.first()
-                "$prefix$GITHUB_RELEASE_BASE"
+                "$prefix${buildGithubReleaseBase(githubRepo)}"
             }
         }
         return "$base/$tag/$fileName"
@@ -108,11 +112,12 @@ object AppUpdateDownloader {
         versionName: String,
         source: DownloadSource,
         proxyPrefix: String? = null,
-        giteeRepo: String = DEFAULT_UPDATE_REPO
+        giteeRepo: String = DEFAULT_UPDATE_REPO,
+        githubRepo: String = DEFAULT_GITHUB_REPO
     ): Flow<DownloadProgress> = callbackFlow {
         var downloadUrl: String? = null
         try {
-            val url = buildDownloadUrl(versionName, source, proxyPrefix, giteeRepo)
+            val url = buildDownloadUrl(versionName, source, proxyPrefix, giteeRepo, githubRepo)
             downloadUrl = url
             android.util.Log.i("AppUpdateDownloader", "开始下载 source=$source url=$url")
             val file = apkFile(context, versionName)

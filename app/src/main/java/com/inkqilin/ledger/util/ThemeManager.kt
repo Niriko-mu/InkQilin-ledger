@@ -17,6 +17,7 @@ const val DEFAULT_PRIMARY_COLOR_HEX = "#34C759"
 const val DEFAULT_INCOME_COLOR_HEX = "#34C759"
 const val DEFAULT_EXPENSE_COLOR_HEX = "#FF9500"
 const val DEFAULT_UPDATE_REPO = "Murchey/inkqinlin-ledger"
+const val DEFAULT_GITHUB_REPO = "Niriko-mu/InkQilin-ledger"
 
 enum class ThemeMode {
     AUTO, LIGHT, DARK
@@ -33,16 +34,18 @@ enum class AiDataRange(val label: String) {
 }
 
 /**
- * 将用户输入规范化为 Gitee `owner/repo`。
- * 支持：owner/repo、https://gitee.com/owner/repo、https://gitee.com/owner/repo/releases 等。
+ * 将用户输入规范化为 `owner/repo`。
+ * 支持：owner/repo、https://host/owner/repo、https://host/owner/repo/releases 等。
  */
-fun normalizeGiteeRepo(input: String): String {
+fun normalizeRepoPath(input: String, vararg hosts: String): String {
     var s = input.trim().trimEnd('/')
     if (s.isBlank()) return ""
-    s = s.removePrefix("https://gitee.com/")
-        .removePrefix("http://gitee.com/")
-        .removePrefix("https://www.gitee.com/")
-        .removePrefix("http://www.gitee.com/")
+    hosts.forEach { host ->
+        s = s.removePrefix("https://$host/")
+            .removePrefix("http://$host/")
+            .removePrefix("https://www.$host/")
+            .removePrefix("http://www.$host/")
+    }
     s = s.substringBefore("/releases")
         .substringBefore("/tree")
         .substringBefore("/blob")
@@ -50,6 +53,12 @@ fun normalizeGiteeRepo(input: String): String {
     val parts = s.split("/").filter { it.isNotBlank() }
     return if (parts.size >= 2) "${parts[0]}/${parts[1]}" else s
 }
+
+fun normalizeGiteeRepo(input: String): String =
+    normalizeRepoPath(input, "gitee.com")
+
+fun normalizeGithubRepo(input: String): String =
+    normalizeRepoPath(input, "github.com")
 
 class ThemeManager(private val context: Context) {
     private val THEME_KEY = stringPreferencesKey("theme_mode")
@@ -61,6 +70,7 @@ class ThemeManager(private val context: Context) {
     private val CHECK_UPDATE_ENABLED_KEY = booleanPreferencesKey("check_update_enabled")
     private val UPDATE_PROXY_URL_KEY = stringPreferencesKey("update_proxy_url")
     private val UPDATE_REPO_KEY = stringPreferencesKey("update_repo")
+    private val GITHUB_REPO_KEY = stringPreferencesKey("github_repo")
     private val CUSTOM_PRIMARY_COLOR_KEY = stringPreferencesKey("custom_primary_color")
     private val AUTO_RECORD_ENABLED_KEY = booleanPreferencesKey("auto_record_enabled")
     private val OCR_ENABLED_KEY = booleanPreferencesKey("ocr_enabled")
@@ -145,6 +155,11 @@ private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
     /** 更新检测仓库路径，格式 owner/repo 或完整 Gitee 地址 */
     val updateRepo: Flow<String> = context.dataStore.data.map { preferences ->
         preferences[UPDATE_REPO_KEY]?.takeIf { it.isNotBlank() } ?: DEFAULT_UPDATE_REPO
+    }
+
+    /** GitHub 下载仓库路径，格式 owner/repo 或完整 GitHub 地址 */
+    val githubRepo: Flow<String> = context.dataStore.data.map { preferences ->
+        preferences[GITHUB_REPO_KEY]?.takeIf { it.isNotBlank() } ?: DEFAULT_GITHUB_REPO
     }
 
     val customPrimaryColor: Flow<String?> = context.dataStore.data.map { preferences ->
@@ -286,6 +301,17 @@ private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
                 preferences.remove(UPDATE_REPO_KEY)
             } else {
                 preferences[UPDATE_REPO_KEY] = normalized
+            }
+        }
+    }
+
+    suspend fun setGithubRepo(repo: String) {
+        context.dataStore.edit { preferences ->
+            val normalized = normalizeGithubRepo(repo)
+            if (normalized.isBlank()) {
+                preferences.remove(GITHUB_REPO_KEY)
+            } else {
+                preferences[GITHUB_REPO_KEY] = normalized
             }
         }
     }
