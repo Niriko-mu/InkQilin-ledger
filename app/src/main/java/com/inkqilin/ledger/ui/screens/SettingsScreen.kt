@@ -738,10 +738,13 @@ fun SettingsScreen(
         }
         val checkUpdateEnabled by viewModel.checkUpdateEnabled.collectAsState()
         val updateProxyUrl by viewModel.updateProxyUrl.collectAsState()
+        val updateRepo by viewModel.updateRepo.collectAsState()
         val proxyOptions = com.inkqilin.ledger.util.PROXY_SOURCES + "自定义"
         var showProxyDropdown by remember { mutableStateOf(false) }
         var showCustomProxyInput by remember { mutableStateOf(false) }
         var customProxyUrl by remember { mutableStateOf("") }
+        var showUpdateRepoDialog by remember { mutableStateOf(false) }
+        var updateRepoInput by remember { mutableStateOf(updateRepo) }
 
         SettingsSectionHeader("更新检测", if (checkUpdateEnabled) "启动时自动检查" else "已关闭", updateSectionExpanded) { updateSectionExpanded = !updateSectionExpanded }
         AnimatedVisibility(visible = updateSectionExpanded) {
@@ -749,10 +752,27 @@ fun SettingsScreen(
             Column {
                 ListItem(
                     headlineContent = { Text("启动时检测新版本") },
-                    supportingContent = { Text(if (checkUpdateEnabled) "已启用，启动时自动检测 GitHub 新版本" else "已关闭") },
+                    supportingContent = { Text(if (checkUpdateEnabled) "已启用，启动时自动检测 Gitee 新版本" else "已关闭") },
                     trailingContent = {
                         Switch(checked = checkUpdateEnabled, onCheckedChange = { viewModel.setCheckUpdateEnabled(it) })
                     }
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                ListItem(
+                    headlineContent = { Text("更新检测仓库") },
+                    supportingContent = { Text("Gitee: $updateRepo", maxLines = 2, fontSize = 12.sp) },
+                    leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
+                    modifier = Modifier.clickable {
+                        updateRepoInput = updateRepo
+                        showUpdateRepoDialog = true
+                    }
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                ListItem(
+                    headlineContent = { Text("检查更新") },
+                    supportingContent = { Text("立即检测是否有新版本，有则弹出更新") },
+                    leadingContent = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                    modifier = Modifier.clickable { viewModel.triggerManualUpdateCheck() }
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 // 代理源选择
@@ -823,6 +843,53 @@ fun SettingsScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showCustomProxyInput = false }) { Text("取消") }
+                }
+            )
+        }
+
+        // 更新检测仓库对话框
+        if (showUpdateRepoDialog) {
+            AlertDialog(
+                onDismissRequest = { showUpdateRepoDialog = false },
+                title = { Text("更新检测仓库") },
+                text = {
+                    Column {
+                        Text(
+                            "填写 Gitee 仓库路径，用于检测新版本。支持 owner/repo 或完整地址。",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "默认: ${com.inkqilin.ledger.util.DEFAULT_UPDATE_REPO}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = updateRepoInput,
+                            onValueChange = { updateRepoInput = it },
+                            placeholder = { Text("Murchey/inkqinlin-ledger") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val raw = updateRepoInput.trim()
+                        val normalized = com.inkqilin.ledger.util.normalizeGiteeRepo(raw)
+                        if (normalized.isBlank()) {
+                            Toast.makeText(context, "路径不能为空", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.setUpdateRepo(normalized)
+                            Toast.makeText(context, "已保存: $normalized", Toast.LENGTH_SHORT).show()
+                            showUpdateRepoDialog = false
+                        }
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showUpdateRepoDialog = false }) { Text("取消") }
                 }
             )
         }
@@ -1067,7 +1134,7 @@ fun SettingsScreen(
                     supportingContent = { Text("版本 ${viewModel.getCurrentVersionName(context)} · GitHub 仓库") },
                     leadingContent = { Icon(Icons.Default.Share, contentDescription = null) },
                     modifier = Modifier.clickable {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Murchey/inkqilin-ledger"))
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Niriko-mu/InkQilin-ledger"))
                         context.startActivity(intent)
                     }
                 )
@@ -1530,7 +1597,7 @@ private fun SettingsScreenPreview() {
                 Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), shape = RoundedCornerShape(18.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                     ListItem(
                         headlineContent = { Text("启动时检测新版本") },
-                        supportingContent = { Text("已启用，启动时自动检测 GitHub 新版本") },
+                        supportingContent = { Text("已启用，启动时自动检测 Gitee 新版本") },
                         trailingContent = { Switch(checked = true, onCheckedChange = {}) }
                     )
                 }

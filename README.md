@@ -51,7 +51,7 @@ A personal finance Android app built with Jetpack Compose and Material 3. Suppor
 - **Theme Customization** — Light mode (#715CFF purple) / Dark mode (#51B4FF blue); follows system setting
 - **Custom Colors** — Customize income/expense display colors across all views
 - **Immersive UI** — Full-screen layout with transparent status and navigation bars
-- **Update Checker** — Auto-checks GitHub for new versions; view changelog and download
+- **Update Checker** — Auto-checks Gitee for new versions; view changelog and download via Gitee / GitHub
 
 ## Tech Stack
 

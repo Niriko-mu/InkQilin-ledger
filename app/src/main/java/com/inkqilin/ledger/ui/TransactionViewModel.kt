@@ -315,6 +315,25 @@ class TransactionViewModel(
         com.inkqilin.ledger.util.PROXY_SOURCES.first()
     )
 
+    val updateRepo: StateFlow<String> = themeManager.updateRepo.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000),
+        com.inkqilin.ledger.util.DEFAULT_UPDATE_REPO
+    )
+
+    fun setUpdateRepo(repo: String) {
+        viewModelScope.launch { themeManager.setUpdateRepo(repo) }
+    }
+
+    /** 设置页「检查更新」→ MainActivity 弹出更新对话框 */
+    private val _manualUpdateCheckTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val manualUpdateCheckTrigger: SharedFlow<Unit> = _manualUpdateCheckTrigger.asSharedFlow()
+
+    fun triggerManualUpdateCheck() {
+        viewModelScope.launch {
+            _manualUpdateCheckTrigger.emit(Unit)
+        }
+    }
+
     val customPrimaryColorHex: StateFlow<String?> = themeManager.customPrimaryColor.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), null
     )
