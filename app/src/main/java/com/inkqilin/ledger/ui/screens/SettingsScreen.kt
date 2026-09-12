@@ -91,7 +91,8 @@ fun SettingsScreen(
     onNavigateToCurrencyManagement: () -> Unit = {},
     onNavigateToAIConfig: () -> Unit = {},
     onNavigateToOCRConfig: () -> Unit = {},
-    onNavigateToBillImport: () -> Unit = {}
+    onNavigateToBillImport: () -> Unit = {},
+    onNavigateToCloudBackup: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -299,14 +300,15 @@ fun SettingsScreen(
         }
     )
 
-    var appSectionExpanded by remember { mutableStateOf(true) }
-    var displaySectionExpanded by remember { mutableStateOf(true) }
-    var categorySectionExpanded by remember { mutableStateOf(false) }
-    var featureSectionExpanded by remember { mutableStateOf(true) }
-    var currencySectionExpanded by remember { mutableStateOf(false) }
-    var updateSectionExpanded by remember { mutableStateOf(false) }
-    var dataSectionExpanded by remember { mutableStateOf(false) }
-    var widgetSectionExpanded by remember { mutableStateOf(false) }
+    // 使用 rememberSaveable：进入二级页（云备份等）返回后仍保持展开状态
+    var appSectionExpanded by rememberSaveable { mutableStateOf(true) }
+    var displaySectionExpanded by rememberSaveable { mutableStateOf(true) }
+    var categorySectionExpanded by rememberSaveable { mutableStateOf(false) }
+    var featureSectionExpanded by rememberSaveable { mutableStateOf(true) }
+    var currencySectionExpanded by rememberSaveable { mutableStateOf(false) }
+    var updateSectionExpanded by rememberSaveable { mutableStateOf(false) }
+    var dataSectionExpanded by rememberSaveable { mutableStateOf(false) }
+    var widgetSectionExpanded by rememberSaveable { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp)) {
         // region 1. 应用版本
@@ -380,7 +382,7 @@ fun SettingsScreen(
         }
 
         // region 2. 显示设置
-        var displaySettingsExpanded by remember { mutableStateOf(false) }
+        var displaySettingsExpanded by rememberSaveable { mutableStateOf(false) }
         SettingsSectionHeader("显示设置", when (themeMode) {
             ThemeMode.AUTO -> "跟随系统"
             ThemeMode.LIGHT -> "浅色模式"
@@ -954,7 +956,7 @@ fun SettingsScreen(
             )
         }
 
-        var labExpanded by remember { mutableStateOf(false) }
+        var labExpanded by rememberSaveable { mutableStateOf(false) }
         SettingsSectionHeader(
             title = "实验室功能",
             summary = if (autoRecordEnabled || ocrEnabled || albumEnabled) "部分功能已启用" else "未启用实验室功能",
@@ -998,10 +1000,18 @@ fun SettingsScreen(
     }
 
 
-        SettingsSectionHeader("数据管理", "导入、导出与人情账本数据", dataSectionExpanded) { dataSectionExpanded = !dataSectionExpanded }
+        SettingsSectionHeader("数据管理", "导入、导出与云备份", dataSectionExpanded) { dataSectionExpanded = !dataSectionExpanded }
         AnimatedVisibility(visible = dataSectionExpanded) {
         Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), elevation = CardDefaults.cardElevation(0.dp)) {
             Column {
+                ListItem(
+                    headlineContent = { Text("云备份") },
+                    supportingContent = { Text("加密打包账本到腾讯云 COS，可恢复到本机") },
+                    leadingContent = { Icon(Icons.Default.Lock, contentDescription = null) },
+                    trailingContent = { Icon(Icons.Default.KeyboardArrowRight, contentDescription = null) },
+                    modifier = Modifier.clickable { onNavigateToCloudBackup() }
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 ListItem(
                     headlineContent = { Text("导出账单为 Excel") },
                     supportingContent = { Text("选择时间范围并导出记账记录") },

@@ -663,6 +663,9 @@ fun MainScreen(
                             },
                             onNavigateToBillImport = {
                                 navController.navigate("bill_import")
+                            },
+                            onNavigateToCloudBackup = {
+                                navController.navigate("cloud_backup")
                             }
                         )
                     }
@@ -677,6 +680,12 @@ fun MainScreen(
             }
             composable("ocr_config") {
                 OCRConfigScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable("cloud_backup") {
+                CloudBackupScreen(
                     viewModel = viewModel,
                     onBack = { navController.popBackStack() }
                 )

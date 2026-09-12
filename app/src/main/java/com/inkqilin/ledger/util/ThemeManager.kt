@@ -71,6 +71,10 @@ class ThemeManager(private val context: Context) {
     private val UPDATE_PROXY_URL_KEY = stringPreferencesKey("update_proxy_url")
     private val UPDATE_REPO_KEY = stringPreferencesKey("update_repo")
     private val GITHUB_REPO_KEY = stringPreferencesKey("github_repo")
+    private val COS_SECRET_ID_KEY = stringPreferencesKey("cos_secret_id")
+    private val COS_SECRET_KEY_KEY = stringPreferencesKey("cos_secret_key")
+    private val COS_BUCKET_URL_KEY = stringPreferencesKey("cos_bucket_url")
+    private val COS_PREFIX_KEY = stringPreferencesKey("cos_prefix")
     private val CUSTOM_PRIMARY_COLOR_KEY = stringPreferencesKey("custom_primary_color")
     private val AUTO_RECORD_ENABLED_KEY = booleanPreferencesKey("auto_record_enabled")
     private val OCR_ENABLED_KEY = booleanPreferencesKey("ocr_enabled")
@@ -160,6 +164,29 @@ private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
     /** GitHub 下载仓库路径，格式 owner/repo 或完整 GitHub 地址 */
     val githubRepo: Flow<String> = context.dataStore.data.map { preferences ->
         preferences[GITHUB_REPO_KEY]?.takeIf { it.isNotBlank() } ?: DEFAULT_GITHUB_REPO
+    }
+
+    /** 腾讯云 COS 私有备份配置 */
+    val cosConfig: Flow<CosConfig> = context.dataStore.data.map { preferences ->
+        CosConfig(
+            secretId = preferences[COS_SECRET_ID_KEY] ?: "",
+            secretKey = preferences[COS_SECRET_KEY_KEY] ?: "",
+            bucketUrl = preferences[COS_BUCKET_URL_KEY] ?: "",
+            prefix = preferences[COS_PREFIX_KEY]?.takeIf { it.isNotBlank() } ?: "backups/v1"
+        )
+    }
+
+    suspend fun setCosConfig(config: CosConfig) {
+        context.dataStore.edit { preferences ->
+            if (config.secretId.isBlank()) preferences.remove(COS_SECRET_ID_KEY)
+            else preferences[COS_SECRET_ID_KEY] = config.secretId.trim()
+            if (config.secretKey.isBlank()) preferences.remove(COS_SECRET_KEY_KEY)
+            else preferences[COS_SECRET_KEY_KEY] = config.secretKey.trim()
+            if (config.bucketUrl.isBlank()) preferences.remove(COS_BUCKET_URL_KEY)
+            else preferences[COS_BUCKET_URL_KEY] = config.bucketUrl.trim()
+            if (config.prefix.isBlank()) preferences.remove(COS_PREFIX_KEY)
+            else preferences[COS_PREFIX_KEY] = config.prefix.trim().ifBlank { "backups/v1" }
+        }
     }
 
     val customPrimaryColor: Flow<String?> = context.dataStore.data.map { preferences ->

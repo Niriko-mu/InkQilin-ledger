@@ -342,5 +342,16 @@ abstract class AppDatabase : RoomDatabase() {
                 instance
             }
         }
+
+        /** 云恢复前关闭并丢弃单例，避免覆盖文件后仍使用旧连接 */
+        fun closeAndClear() {
+            synchronized(this) {
+                try {
+                    INSTANCE?.close()
+                } catch (_: Exception) {
+                }
+                INSTANCE = null
+            }
+        }
     }
 }

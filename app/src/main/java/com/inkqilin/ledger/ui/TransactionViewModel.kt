@@ -333,6 +333,17 @@ class TransactionViewModel(
         viewModelScope.launch { themeManager.setGithubRepo(repo) }
     }
 
+    val cosConfig: StateFlow<com.inkqilin.ledger.util.CosConfig> =
+        themeManager.cosConfig.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            com.inkqilin.ledger.util.CosConfig()
+        )
+
+    fun setCosConfig(config: com.inkqilin.ledger.util.CosConfig) {
+        viewModelScope.launch { themeManager.setCosConfig(config) }
+    }
+
     /** 设置页「检查更新」→ MainActivity 弹出更新对话框 */
     private val _manualUpdateCheckTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val manualUpdateCheckTrigger: SharedFlow<Unit> = _manualUpdateCheckTrigger.asSharedFlow()
