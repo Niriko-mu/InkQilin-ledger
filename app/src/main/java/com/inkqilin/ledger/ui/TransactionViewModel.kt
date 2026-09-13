@@ -371,12 +371,20 @@ class TransactionViewModel(
         viewModelScope, SharingStarted.WhileSubscribed(5000), 0.35f
     )
 
+    val homeTxCardOpacity: StateFlow<Float> = themeManager.homeTxCardOpacity.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), 0.72f
+    )
+
     fun setHomeBgImagePath(path: String?) {
         viewModelScope.launch { themeManager.setHomeBgImagePath(path) }
     }
 
     fun setHomeBgOpacity(opacity: Float) {
         viewModelScope.launch { themeManager.setHomeBgOpacity(opacity) }
+    }
+
+    fun setHomeTxCardOpacity(opacity: Float) {
+        viewModelScope.launch { themeManager.setHomeTxCardOpacity(opacity) }
     }
 
     /** 将用户选择的图片复制到应用私有目录，避免 content URI 失效 */

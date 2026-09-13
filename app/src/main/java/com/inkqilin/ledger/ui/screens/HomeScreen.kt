@@ -95,6 +95,7 @@ fun HomeScreen(
     val homeCardColorHex by viewModel.homeCardColor.collectAsState()
     val homeBgImagePath by viewModel.homeBgImagePath.collectAsState()
     val homeBgOpacity by viewModel.homeBgOpacity.collectAsState()
+    val homeTxCardOpacity by viewModel.homeTxCardOpacity.collectAsState()
 
     var selectedYearMonth by rememberSaveable(
         stateSaver = listSaver(
@@ -456,7 +457,7 @@ fun HomeScreen(
                                     onDelete = { transactionToDelete = transaction },
                                     onEdit = { onNavigateToEditTransaction(transaction) },
                                     onClick = { onNavigateToEditTransaction(transaction) },
-                                    translucent = bgFile != null && bgFile.exists()
+                                    cardOpacity = homeTxCardOpacity
                                 )
                             }
                         }

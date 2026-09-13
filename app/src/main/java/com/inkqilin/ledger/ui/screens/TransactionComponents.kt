@@ -56,8 +56,8 @@ fun SwipeableTransactionItem(
     onDelete: () -> Unit,
     onEdit: () -> Unit,
     onClick: () -> Unit = onEdit,
-    /** 为 true 时降低卡片不透明度，让首页背景图透出 */
-    translucent: Boolean = false
+    /** 卡片不透明度 0.08–1；配合首页背景图使用 */
+    cardOpacity: Float = 0.8f
 ) {
     val density = LocalDensity.current
     val menuWidth = 120.dp
@@ -71,8 +71,10 @@ fun SwipeableTransactionItem(
 
     val expenseColorHex by viewModel.expenseColor.collectAsState()
     val expenseColor = Color(expenseColorHex.toColorInt())
-    val trackAlpha = if (translucent) 0.12f else 0.5f
-    val cardAlpha = if (translucent) 0.32f else 0.8f
+    val cardAlpha = cardOpacity.coerceIn(0.08f, 1f)
+    val trackAlpha = (cardAlpha * 0.45f).coerceIn(0.06f, 0.55f)
+    // 未滑开时不组合操作按钮，避免半透明卡片下图标透出重叠
+    val menuProgress = if (menuWidthPx <= 0f) 0f else (-offsetX / menuWidthPx).coerceIn(0f, 1f)
 
     Box(
         modifier = Modifier
@@ -81,29 +83,34 @@ fun SwipeableTransactionItem(
             .clip(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = trackAlpha))
     ) {
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .width(menuWidth)
-                .fillMaxHeight(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            IconButton(
-                onClick = {
-                    offsetX = 0f
-                    onEdit()
-                }
+        if (menuProgress > 0.02f) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(menuWidth)
+                    .fillMaxHeight()
+                    // 操作区用接近不透明底，滑开后不与背景图/上层内容混叠
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f))
+                    .graphicsLayer { alpha = menuProgress },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.primary)
-            }
-            IconButton(
-                onClick = {
-                    offsetX = 0f
-                    onDelete()
+                IconButton(
+                    onClick = {
+                        offsetX = 0f
+                        onEdit()
+                    }
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.primary)
                 }
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = expenseColor)
+                IconButton(
+                    onClick = {
+                        offsetX = 0f
+                        onDelete()
+                    }
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = expenseColor)
+                }
             }
         }
 
@@ -120,12 +127,17 @@ fun SwipeableTransactionItem(
                         animate(
                             initialValue = offsetX,
                             targetValue = target,
-                            animationSpec = MotionSprings.interactive() // iOS-like bouncy menu snap
+                            animationSpec = MotionSprings.interactive()
                         ) { value, _ -> offsetX = value }
                     }
                 )
         ) {
-            TransactionItem(transaction, viewModel, onClick = onClick, translucent = translucent)
+            TransactionItem(
+                transaction = transaction,
+                viewModel = viewModel,
+                onClick = onClick,
+                translucent = cardAlpha < 0.95f
+            )
         }
     }
 }

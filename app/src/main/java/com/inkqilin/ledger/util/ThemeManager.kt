@@ -97,6 +97,7 @@ class ThemeManager(private val context: Context) {
     private val HOME_CARD_COLOR_KEY = stringPreferencesKey("home_card_color")
     private val HOME_BG_IMAGE_PATH_KEY = stringPreferencesKey("home_bg_image_path")
     private val HOME_BG_OPACITY_KEY = doublePreferencesKey("home_bg_opacity")
+    private val HOME_TX_CARD_OPACITY_KEY = doublePreferencesKey("home_tx_card_opacity")
 private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
     private val WIDGET_QUICK_CATEGORIES_KEY = stringPreferencesKey("widget_quick_categories")
 
@@ -283,6 +284,11 @@ private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
     /** 首页背景不透明度 0f–1f，默认 0.35 */
     val homeBgOpacity: Flow<Float> = context.dataStore.data.map { preferences ->
         ((preferences[HOME_BG_OPACITY_KEY] ?: 0.35).toFloat()).coerceIn(0.05f, 1f)
+    }
+
+    /** 首页账单条目卡片不透明度，默认 0.72 */
+    val homeTxCardOpacity: Flow<Float> = context.dataStore.data.map { preferences ->
+        ((preferences[HOME_TX_CARD_OPACITY_KEY] ?: 0.72).toFloat()).coerceIn(0.08f, 1f)
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {
@@ -501,6 +507,12 @@ private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
     suspend fun setHomeBgOpacity(opacity: Float) {
         context.dataStore.edit { preferences ->
             preferences[HOME_BG_OPACITY_KEY] = opacity.coerceIn(0.05f, 1f).toDouble()
+        }
+    }
+
+    suspend fun setHomeTxCardOpacity(opacity: Float) {
+        context.dataStore.edit { preferences ->
+            preferences[HOME_TX_CARD_OPACITY_KEY] = opacity.coerceIn(0.08f, 1f).toDouble()
         }
     }
 

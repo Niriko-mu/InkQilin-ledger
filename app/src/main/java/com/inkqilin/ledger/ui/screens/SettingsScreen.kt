@@ -1420,6 +1420,24 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
+                Spacer(Modifier.height(12.dp))
+                val savedTxOpacity by viewModel.homeTxCardOpacity.collectAsState()
+                var draftTxOpacity by remember(showHomeBgSheet) { mutableFloatStateOf(savedTxOpacity) }
+                Text(
+                    "账单条目不透明度 ${(draftTxOpacity * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = draftTxOpacity,
+                    onValueChange = { draftTxOpacity = it },
+                    valueRange = 0.08f..1f
+                )
+                Text(
+                    "左滑编辑/删除在未滑开时不会透出；滑开后操作区为近不透明底。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 Spacer(Modifier.height(20.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1432,6 +1450,7 @@ fun SettingsScreen(
                     Button(
                         onClick = {
                             viewModel.setHomeBgOpacity(draftOpacity)
+                            viewModel.setHomeTxCardOpacity(draftTxOpacity)
                             showHomeBgSheet = false
                         },
                         modifier = Modifier.weight(1f)
