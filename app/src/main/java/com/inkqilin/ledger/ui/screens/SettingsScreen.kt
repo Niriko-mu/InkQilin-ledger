@@ -229,7 +229,8 @@ fun SettingsScreen(
                     }
                     val assets = viewModel.allUserAssets.value
                     val flows = viewModel.allAssetFlows.value
-                    val success = ExcelExporter.exportToUri(context, it, transactions, assets, flows)
+                    val categories = viewModel.allCategories.first()
+                    val success = ExcelExporter.exportToUri(context, it, transactions, assets, flows, categories)
                     if (success) {
                         Toast.makeText(context, "导出成功！账单${transactions.size}条，资产${assets.size}项，流转${flows.size}条", Toast.LENGTH_SHORT).show()
                     } else {

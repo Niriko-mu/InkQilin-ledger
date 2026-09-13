@@ -250,9 +250,54 @@ object CloudBackupManager {
 
     fun listLocalBackups(context: Context): List<File> {
         val dir = localBackupDir(context)
-        return dir.listFiles { f -> f.isFile && f.name.endsWith(".zip") }
+        return dir.listFiles { f -> f.isFile && (f.name.endsWith(".zip") || f.name.endsWith(".iqbackup")) }
             ?.sortedByDescending { it.lastModified() }
             ?: emptyList()
+    }
+
+    /**
+     * 从系统文件选择器 Uri 导入备份到本地列表。
+     * 接受明文 zip（PK 开头）或应用加密包（IQBK1）。
+     */
+    suspend fun importBackupFromUri(
+        context: Context,
+        uri: android.net.Uri,
+        displayName: String?
+    ): File = withContext(Dispatchers.IO) {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: error("无法读取所选文件")
+        if (bytes.size < 32) error("文件过小，不是有效备份")
+
+        val isZip = bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()
+        val isEnc = BackupCrypto.isEncrypted(bytes)
+        if (!isZip && !isEnc) {
+            error("不是账本备份文件（需为 zip 或本应用加密包）")
+        }
+        // 明文 zip 再验一下能否当 zip 打开
+        if (isZip) {
+            runCatching {
+                java.util.zip.ZipInputStream(bytes.inputStream()).use { zis ->
+                    if (zis.nextEntry == null) error("zip 为空")
+                }
+            }.getOrElse { error("zip 无法解析：${it.message}") }
+        }
+
+        var name = displayName?.substringAfterLast('/')?.trim().orEmpty()
+            .ifBlank { "imported_${System.currentTimeMillis()}" }
+        if (!name.endsWith(".zip") && !name.endsWith(".iqbackup")) {
+            name = if (isEnc) "${name}_enc.zip" else "$name.zip"
+        }
+        // 避免覆盖已有文件
+        var target = File(localBackupDir(context), name)
+        var seq = 1
+        while (target.exists()) {
+            val base = name.substringBeforeLast('.')
+            val ext = name.substringAfterLast('.')
+            target = File(localBackupDir(context), "${base}_$seq.$ext")
+            seq++
+        }
+        target.outputStream().use { it.write(bytes) }
+        target
     }
 
     // ── 恢复前安全副本 / 救灾 ──

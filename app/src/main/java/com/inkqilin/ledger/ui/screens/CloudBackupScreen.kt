@@ -122,6 +122,28 @@ fun CloudBackupScreen(
     var lastLocalBackupInfo by remember { mutableStateOf<String?>(null) }
     var exportTarget by remember { mutableStateOf<File?>(null) }
 
+    fun refreshLocalList() {
+        localBackups = CloudBackupManager.listLocalBackups(context)
+    }
+
+    fun refreshCloudList() {
+        if (!cosConfig.isConfigured) {
+            cloudBackups = emptyList()
+            return
+        }
+        isLoadingCloudList = true
+        scope.launch {
+            try {
+                cloudBackups = withContext(Dispatchers.IO) { CloudBackupManager.listBackups(cosConfig) }
+                uiState = BackupUiState.Idle
+            } catch (e: Exception) {
+                uiState = BackupUiState.Error(e.message ?: "加载云端列表失败")
+            } finally {
+                isLoadingCloudList = false
+            }
+        }
+    }
+
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
@@ -141,24 +163,27 @@ fun CloudBackupScreen(
         }
     }
 
-    fun refreshLocalList() {
-        localBackups = CloudBackupManager.listLocalBackups(context)
-    }
-
-    fun refreshCloudList() {
-        if (!cosConfig.isConfigured) {
-            cloudBackups = emptyList()
-            return
-        }
-        isLoadingCloudList = true
-        scope.launch {
-            try {
-                cloudBackups = withContext(Dispatchers.IO) { CloudBackupManager.listBackups(cosConfig) }
-                uiState = BackupUiState.Idle
-            } catch (e: Exception) {
-                uiState = BackupUiState.Error(e.message ?: "加载云端列表失败")
-            } finally {
-                isLoadingCloudList = false
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            uiState = BackupUiState.Working
+            scope.launch {
+                try {
+                    val name = runCatching {
+                        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                            val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+                        }
+                    }.getOrNull()
+                    val file = withContext(Dispatchers.IO) {
+                        CloudBackupManager.importBackupFromUri(context, uri, name)
+                    }
+                    uiState = BackupUiState.Success("已导入：${file.name}，可在列表中恢复")
+                    refreshLocalList()
+                } catch (e: Exception) {
+                    uiState = BackupUiState.Error(e.message ?: "导入失败")
+                }
             }
         }
     }
@@ -228,6 +253,16 @@ fun CloudBackupScreen(
                 onShowFileInfo = {
                     fileInfoText = CloudBackupManager.describeLocalBackupFiles(context)
                     showFileInfo = true
+                },
+                onImport = {
+                    importLauncher.launch(
+                        arrayOf(
+                            "application/zip",
+                            "application/octet-stream",
+                            "application/x-zip-compressed",
+                            "*/*"
+                        )
+                    )
                 }
             )
         } else {
@@ -504,7 +539,8 @@ private fun ColumnScope.LocalBackupSection(
     onDelete: (File) -> Unit,
     onExport: (File) -> Unit,
     onRestoreSafety: () -> Unit,
-    onShowFileInfo: () -> Unit
+    onShowFileInfo: () -> Unit,
+    onImport: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -524,16 +560,47 @@ private fun ColumnScope.LocalBackupSection(
                 Text(lastInfo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onBackupNow, enabled = !working) { Text("立即本地备份") }
-                OutlinedButton(onClick = onRefresh, enabled = !working) { Text("刷新") }
+            // 主操作：等宽两列，避免挤在一行
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onBackupNow,
+                    enabled = !working,
+                    modifier = Modifier.weight(1f)
+                ) { Text("立即备份", maxLines = 1) }
+                OutlinedButton(
+                    onClick = onRefresh,
+                    enabled = !working,
+                    modifier = Modifier.weight(1f)
+                ) { Text("刷新", maxLines = 1) }
             }
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onRestoreSafety, enabled = hasSafetyCopy && !working) {
-                    Text(if (hasSafetyCopy) "从安全副本恢复" else "无安全副本")
-                }
-                OutlinedButton(onClick = onShowFileInfo) { Text("本机文件信息") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onImport,
+                    enabled = !working,
+                    modifier = Modifier.weight(1f)
+                ) { Text("导入文件", maxLines = 1) }
+                OutlinedButton(
+                    onClick = onShowFileInfo,
+                    modifier = Modifier.weight(1f)
+                ) { Text("文件信息", maxLines = 1) }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onRestoreSafety,
+                enabled = hasSafetyCopy && !working,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (hasSafetyCopy) "从安全副本恢复" else "无安全副本",
+                    maxLines = 1
+                )
             }
             if (hasSafetyCopy) {
                 Spacer(Modifier.height(6.dp))

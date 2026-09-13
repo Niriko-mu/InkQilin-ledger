@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import com.inkqilin.ledger.data.AssetFlow
+import com.inkqilin.ledger.data.Category
 import com.inkqilin.ledger.data.Transaction
 import com.inkqilin.ledger.data.UserAsset
 import org.apache.poi.ss.usermodel.CellStyle
@@ -23,19 +24,21 @@ object ExcelExporter {
 
     /**
      * 导出完整数据到 Excel
-     * Sheet1: 账单记录
-     * Sheet2: 资产总览 + 流转记录
+     * Sheet1: 账单记录（含分类、备注、币种、UUID）
+     * Sheet2: 资产与流转
+     * Sheet3: 自定义分类（名称/类型/图标/颜色/排序）
      */
     fun exportToUri(
         context: Context,
         uri: Uri,
         transactions: List<Transaction>,
         assets: List<UserAsset>,
-        flows: List<AssetFlow>
+        flows: List<AssetFlow>,
+        categories: List<Category> = emptyList()
     ): Boolean {
         return try {
             context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                writeWorkbook(outputStream, transactions, assets, flows)
+                writeWorkbook(outputStream, transactions, assets, flows, categories)
             }
             true
         } catch (e: Exception) {
@@ -48,7 +51,8 @@ object ExcelExporter {
         outputStream: OutputStream,
         transactions: List<Transaction>,
         assets: List<UserAsset>,
-        flows: List<AssetFlow>
+        flows: List<AssetFlow>,
+        categories: List<Category>
     ) {
         val workbook = XSSFWorkbook()
 
@@ -198,6 +202,47 @@ object ExcelExporter {
         sheet2.setColumnWidth(3, 14 * 256)
         sheet2.setColumnWidth(4, 14 * 256)
         sheet2.setColumnWidth(5, 30 * 256)
+
+        // ===== Sheet3: 自定义分类 =====
+        val sheet3 = workbook.createSheet("自定义分类")
+        val catHeaders = arrayOf("名称", "类型", "图标", "颜色", "排序")
+        val catHeaderRow = sheet3.createRow(0)
+        catHeaders.forEachIndexed { i, h ->
+            val cell = catHeaderRow.createCell(i)
+            cell.setCellValue(h)
+            cell.cellStyle = headerStyle
+        }
+        val catNoteRow = sheet3.createRow(1)
+        catNoteRow.createCell(0).apply {
+            setCellValue("说明：导入时会按「名称+类型」去重，已存在的分类不会重复创建")
+            cellStyle = workbook.createCellStyle().apply {
+                val font = workbook.createFont().apply {
+                    italic = true
+                    color = IndexedColors.GREY_50_PERCENT.index
+                }
+                setFont(font)
+            }
+        }
+        categories.sortedWith(compareBy({ it.type.ordinal }, { it.sortOrder }, { it.name }))
+            .forEachIndexed { index, cat ->
+                val row = sheet3.createRow(index + 2)
+                row.createCell(0).setCellValue(cat.name)
+                row.createCell(1).apply {
+                    setCellValue(if (cat.type == com.inkqilin.ledger.data.TransactionType.INCOME) "收入" else "支出")
+                    cellStyle = centerStyle
+                }
+                row.createCell(2).setCellValue(cat.icon)
+                row.createCell(3).setCellValue(cat.color)
+                row.createCell(4).apply {
+                    setCellValue(cat.sortOrder.toDouble())
+                    cellStyle = centerStyle
+                }
+            }
+        sheet3.setColumnWidth(0, 16 * 256)
+        sheet3.setColumnWidth(1, 10 * 256)
+        sheet3.setColumnWidth(2, 10 * 256)
+        sheet3.setColumnWidth(3, 12 * 256)
+        sheet3.setColumnWidth(4, 8 * 256)
 
         workbook.write(outputStream)
         workbook.close()
