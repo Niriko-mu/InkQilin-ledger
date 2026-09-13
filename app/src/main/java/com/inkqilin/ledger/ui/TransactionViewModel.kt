@@ -718,6 +718,7 @@ class TransactionViewModel(
 
     fun deleteTransaction(transaction: Transaction) {
         viewModelScope.launch {
+            // Room @Delete 为硬删除；库已开启 PRAGMA secure_delete，行内容会被覆盖
             transactionDao.deleteTransaction(transaction)
             notifyWidgets()
         }

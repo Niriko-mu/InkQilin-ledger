@@ -1,7 +1,11 @@
 package com.inkqilin.ledger.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,9 +42,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +63,7 @@ import com.inkqilin.ledger.util.CosObjectMeta
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -66,9 +75,19 @@ private sealed class BackupUiState {
     data class Success(val message: String) : BackupUiState()
 }
 
+private sealed class RestoreConfirm {
+    data class Cloud(val item: CosObjectMeta) : RestoreConfirm()
+    data class Local(val file: File) : RestoreConfirm()
+}
+
+private sealed class PendingBackup {
+    data object Local : PendingBackup()
+    data object Cloud : PendingBackup()
+}
+
 /**
- * 云备份二级页。标题与返回由 [MainScreen] 顶栏提供，
- * 右上角 COS 设置由顶栏齿轮通过 [openSettings] / [onOpenSettingsConsumed] 驱动。
+ * 数据备份二级页：本地备份 + 腾讯云 COS 云备份。
+ * 标题与返回由 MainScreen 顶栏提供；COS 设置由顶栏齿轮驱动。
  */
 @Composable
 fun CloudBackupScreen(
@@ -80,193 +99,147 @@ fun CloudBackupScreen(
     val scope = rememberCoroutineScope()
     val cosConfig by viewModel.cosConfig.collectAsState()
 
-    var backups by remember { mutableStateOf<List<CosObjectMeta>>(emptyList()) }
-    var uiState by remember { mutableStateOf<BackupUiState>(BackupUiState.Idle) }
-    var isLoadingList by remember { mutableStateOf(false) }
-    var restoreTarget by remember { mutableStateOf<CosObjectMeta?>(null) }
-    var deleteTarget by remember { mutableStateOf<CosObjectMeta?>(null) }
-    var lastBackupInfo by remember { mutableStateOf<String?>(null) }
+    // 0 = 本地备份， 1 = 云端备份
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
-    fun refreshList() {
-        if (!cosConfig.isConfigured) {
-            backups = emptyList()
-            return
-        }
-        isLoadingList = true
-        uiState = BackupUiState.Idle
-        scope.launch {
-            try {
-                backups = withContext(Dispatchers.IO) { CloudBackupManager.listBackups(cosConfig) }
-                uiState = BackupUiState.Idle
-            } catch (e: Exception) {
-                uiState = BackupUiState.Error(e.message ?: "加载备份列表失败")
-            } finally {
-                isLoadingList = false
+    var uiState by remember { mutableStateOf<BackupUiState>(BackupUiState.Idle) }
+    var showRestoreDoneDialog by remember { mutableStateOf(false) }
+    var restoreConfirm by remember { mutableStateOf<RestoreConfirm?>(null) }
+    var pendingBackup by remember { mutableStateOf<PendingBackup?>(null) }
+
+    // 云端
+    var cloudBackups by remember { mutableStateOf<List<CosObjectMeta>>(emptyList()) }
+    var isLoadingCloudList by remember { mutableStateOf(false) }
+    var deleteCloudTarget by remember { mutableStateOf<CosObjectMeta?>(null) }
+    var lastCloudBackupInfo by remember { mutableStateOf<String?>(null) }
+
+    // 本地
+    var localBackups by remember { mutableStateOf<List<File>>(emptyList()) }
+    var deleteLocalTarget by remember { mutableStateOf<File?>(null) }
+    var lastLocalBackupInfo by remember { mutableStateOf<String?>(null) }
+    var exportTarget by remember { mutableStateOf<File?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        val file = exportTarget
+        exportTarget = null
+        if (uri != null && file != null) {
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    CloudBackupManager.copyLocalBackupToUri(context, file, uri)
+                }
+                uiState = if (ok) {
+                    BackupUiState.Success("已导出到所选位置")
+                } else {
+                    BackupUiState.Error("导出失败")
+                }
             }
         }
     }
 
+    fun refreshLocalList() {
+        localBackups = CloudBackupManager.listLocalBackups(context)
+    }
+
+    fun refreshCloudList() {
+        if (!cosConfig.isConfigured) {
+            cloudBackups = emptyList()
+            return
+        }
+        isLoadingCloudList = true
+        scope.launch {
+            try {
+                cloudBackups = withContext(Dispatchers.IO) { CloudBackupManager.listBackups(cosConfig) }
+                uiState = BackupUiState.Idle
+            } catch (e: Exception) {
+                uiState = BackupUiState.Error(e.message ?: "加载云端列表失败")
+            } finally {
+                isLoadingCloudList = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { refreshLocalList() }
     LaunchedEffect(cosConfig.isConfigured) {
-        if (cosConfig.isConfigured) refreshList()
+        if (cosConfig.isConfigured) refreshCloudList()
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp)
-            .padding(top = 8.dp)
+            .padding(top = 8.dp, bottom = 12.dp)
     ) {
-            // 状态卡
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
-                elevation = CardDefaults.cardElevation(0.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("存储状态", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = if (cosConfig.isConfigured) {
-                            "腾讯云 COS · ${cosConfig.host}"
-                        } else {
-                            "未配置 COS（点右上角齿轮填写密钥与存储桶 URL）"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (lastBackupInfo != null) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = lastBackupInfo!!,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    if (uiState is BackupUiState.Working) {
-                        Spacer(Modifier.height(12.dp))
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        Spacer(Modifier.height(6.dp))
-                        Text("处理中…", style = MaterialTheme.typography.labelSmall)
-                    }
-                    when (val s = uiState) {
-                        is BackupUiState.Error -> {
-                            Spacer(Modifier.height(8.dp))
-                            Text(s.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                        }
-                        is BackupUiState.Success -> {
-                            Spacer(Modifier.height(8.dp))
-                            Text(s.message, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
-                        }
-                        else -> Unit
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                if (!cosConfig.isConfigured) {
-                                    uiState = BackupUiState.Error("请先点右上角齿轮配置 COS")
-                                    return@Button
-                                }
-                                uiState = BackupUiState.Working
-                                scope.launch {
-                                    try {
-                                        val meta = withContext(Dispatchers.IO) {
-                                            CloudBackupManager.uploadBackup(context, cosConfig)
-                                        }
-                                        uiState = BackupUiState.Success("备份成功：${meta.key.substringAfterLast('/')}")
-                                        lastBackupInfo = "上次备份：${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())} · ${CloudBackupManager.formatSize(meta.size)}"
-                                        refreshList()
-                                    } catch (e: Exception) {
-                                        uiState = BackupUiState.Error(e.message ?: "备份失败")
-                                    }
-                                }
-                            },
-                            enabled = uiState !is BackupUiState.Working
-                        ) { Text("立即备份") }
-                        OutlinedButton(
-                            onClick = { refreshList() },
-                            enabled = !isLoadingList && uiState !is BackupUiState.Working
-                        ) {
-                            if (isLoadingList) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            } else {
-                                Text("刷新列表")
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            Text("备份历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-
-            if (!cosConfig.isConfigured) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("尚未配置对象存储", fontWeight = FontWeight.Medium)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "请点右上角设置，填写 SecretId / SecretKey / 存储桶 URL。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            } else if (backups.isEmpty() && !isLoadingList) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Text(
-                        "还没有云备份，点「立即备份」创建第一份。",
-                        modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    elevation = CardDefaults.cardElevation(0.dp)
-                ) {
-                    LazyColumn(modifier = Modifier.height(320.dp)) {
-                        items(backups, key = { it.key }) { item ->
-                            ListItem(
-                                headlineContent = {
-                                    Text(item.key.substringAfterLast('/'), maxLines = 1, fontSize = 14.sp)
-                                },
-                                supportingContent = {
-                                    Text(
-                                        "${CloudBackupManager.formatSize(item.size)} · ${item.lastModified.take(19).replace('T', ' ')}",
-                                        fontSize = 12.sp
-                                    )
-                                },
-                                trailingContent = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        TextButton(onClick = { restoreTarget = item }) { Text("恢复") }
-                                        IconButton(onClick = { deleteTarget = item }) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = "删除",
-                                                tint = MaterialTheme.colorScheme.error
-                                            )
-                                        }
-                                    }
-                                }
-                            )
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
+        // Tab
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                label = { Text("本地备份") }
+            )
+            FilterChip(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                label = { Text("云端备份") }
+            )
         }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 公共状态提示
+        if (uiState is BackupUiState.Working) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            Text("处理中…", style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(8.dp))
+        }
+        when (val s = uiState) {
+            is BackupUiState.Error -> {
+                Text(s.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+            }
+            is BackupUiState.Success -> {
+                Text(s.message, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+            }
+            else -> Unit
+        }
+
+        if (selectedTab == 0) {
+            LocalBackupSection(
+                lastInfo = lastLocalBackupInfo,
+                backups = localBackups,
+                working = uiState is BackupUiState.Working,
+                onBackupNow = { pendingBackup = PendingBackup.Local },
+                onRefresh = { refreshLocalList() },
+                onRestore = { restoreConfirm = RestoreConfirm.Local(it) },
+                onDelete = { deleteLocalTarget = it },
+                onExport = { file ->
+                    exportTarget = file
+                    exportLauncher.launch(file.name)
+                }
+            )
+        } else {
+            CloudBackupSection(
+                cosConfig = cosConfig,
+                lastInfo = lastCloudBackupInfo,
+                backups = cloudBackups,
+                isLoadingList = isLoadingCloudList,
+                working = uiState is BackupUiState.Working,
+                onBackupNow = {
+                    if (!cosConfig.isConfigured) {
+                        uiState = BackupUiState.Error("请先点右上角齿轮配置 COS")
+                        return@CloudBackupSection
+                    }
+                    pendingBackup = PendingBackup.Cloud
+                },
+                onRefresh = { refreshCloudList() },
+                onRestore = { restoreConfirm = RestoreConfirm.Cloud(it) },
+                onDelete = { deleteCloudTarget = it }
+            )
+        }
+    }
 
     if (openSettings) {
         CosSettingsDialog(
@@ -280,23 +253,105 @@ fun CloudBackupScreen(
         )
     }
 
-    restoreTarget?.let { target ->
+    // 备份：可选加密
+    pendingBackup?.let { target ->
+        BackupPasswordDialog(
+            title = if (target is PendingBackup.Local) "本地备份" else "云端备份",
+            onDismiss = { pendingBackup = null },
+            onConfirm = { password ->
+                pendingBackup = null
+                uiState = BackupUiState.Working
+                scope.launch {
+                    try {
+                        when (target) {
+                            PendingBackup.Local -> {
+                                val file = withContext(Dispatchers.IO) {
+                                    CloudBackupManager.createLocalBackup(context, password)
+                                }
+                                lastLocalBackupInfo = "上次本地备份：${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())} · ${CloudBackupManager.formatSize(file.length())}${if (password != null) " · 已加密" else ""}"
+                                uiState = BackupUiState.Success("本地备份成功：${file.name}")
+                                refreshLocalList()
+                            }
+                            PendingBackup.Cloud -> {
+                                val meta = withContext(Dispatchers.IO) {
+                                    CloudBackupManager.uploadBackup(context, cosConfig, password)
+                                }
+                                uiState = BackupUiState.Success("云备份成功：${meta.key.substringAfterLast('/')}")
+                                lastCloudBackupInfo = "上次云备份：${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())} · ${CloudBackupManager.formatSize(meta.size)}${if (password != null) " · 已加密" else ""}"
+                                refreshCloudList()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        uiState = BackupUiState.Error(e.message ?: "备份失败")
+                    }
+                }
+            }
+        )
+    }
+
+    restoreConfirm?.let { confirm ->
+        val label = when (confirm) {
+            is RestoreConfirm.Cloud -> confirm.item.key.substringAfterLast('/')
+            is RestoreConfirm.Local -> confirm.file.name
+        }
+        var restorePassword by remember(confirm) { mutableStateOf("") }
+        val localLooksEncrypted = when (confirm) {
+            is RestoreConfirm.Local -> CloudBackupManager.isLocalBackupEncrypted(confirm.file)
+            is RestoreConfirm.Cloud -> confirm.item.key.contains("_enc")
+        }
         AlertDialog(
-            onDismissRequest = { restoreTarget = null },
+            onDismissRequest = { restoreConfirm = null },
             title = { Text("恢复将覆盖当前账本") },
             text = {
-                Text("将下载 ${target.key.substringAfterLast('/')} 并替换本地数据库。建议先确认云端备份正确。恢复后请强制退出并重新打开应用。")
+                Column {
+                    Text("将使用备份「$label」替换本地数据库。恢复完成后需要关闭应用再打开。")
+                    Spacer(Modifier.height(12.dp))
+                    if (localLooksEncrypted) {
+                        Text(
+                            "此备份可能已加密，请输入备份密码。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    } else {
+                        Text(
+                            "若为加密备份，请填写密码；未加密可留空。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    OutlinedTextField(
+                        value = restorePassword,
+                        onValueChange = { restorePassword = it },
+                        label = { Text("备份密码（未加密可留空）") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             },
             confirmButton = {
                 Button(onClick = {
-                    restoreTarget = null
+                    val confirmRef = confirm
+                    restoreConfirm = null
+                    val pwd = restorePassword.trim().toCharArray()
+                    val pwdOrNull = if (pwd.isEmpty()) null else pwd
                     uiState = BackupUiState.Working
                     scope.launch {
                         try {
                             withContext(Dispatchers.IO) {
-                                CloudBackupManager.downloadAndRestore(context, cosConfig, target.key)
+                                when (confirmRef) {
+                                    is RestoreConfirm.Cloud ->
+                                        CloudBackupManager.downloadAndRestore(
+                                            context, cosConfig, confirmRef.item.key, pwdOrNull
+                                        )
+                                    is RestoreConfirm.Local ->
+                                        CloudBackupManager.restoreLocalBackup(context, confirmRef.file, pwdOrNull)
+                                }
                             }
-                            uiState = BackupUiState.Success("恢复完成，请强制停止应用后重新打开")
+                            uiState = BackupUiState.Success("恢复完成")
+                            showRestoreDoneDialog = true
                         } catch (e: Exception) {
                             uiState = BackupUiState.Error(e.message ?: "恢复失败")
                         }
@@ -304,26 +359,26 @@ fun CloudBackupScreen(
                 }) { Text("我明白，恢复") }
             },
             dismissButton = {
-                TextButton(onClick = { restoreTarget = null }) { Text("取消") }
+                TextButton(onClick = { restoreConfirm = null }) { Text("取消") }
             }
         )
     }
 
-    deleteTarget?.let { target ->
+    deleteCloudTarget?.let { target ->
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
+            onDismissRequest = { deleteCloudTarget = null },
             title = { Text("删除云端备份") },
             text = { Text("确定删除 ${target.key.substringAfterLast('/')}？此操作不可撤销。") },
             confirmButton = {
                 Button(onClick = {
                     val key = target.key
-                    deleteTarget = null
+                    deleteCloudTarget = null
                     uiState = BackupUiState.Working
                     scope.launch {
                         try {
                             withContext(Dispatchers.IO) { CloudBackupManager.deleteBackup(cosConfig, key) }
                             uiState = BackupUiState.Success("已删除")
-                            refreshList()
+                            refreshCloudList()
                         } catch (e: Exception) {
                             uiState = BackupUiState.Error(e.message ?: "删除失败")
                         }
@@ -331,9 +386,270 @@ fun CloudBackupScreen(
                 }) { Text("删除") }
             },
             dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+                TextButton(onClick = { deleteCloudTarget = null }) { Text("取消") }
             }
         )
+    }
+
+    deleteLocalTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteLocalTarget = null },
+            title = { Text("删除本地备份") },
+            text = { Text("确定删除 ${target.name}？此操作不可撤销。") },
+            confirmButton = {
+                Button(onClick = {
+                    val ok = CloudBackupManager.deleteLocalBackup(target)
+                    deleteLocalTarget = null
+                    uiState = if (ok && !target.exists()) {
+                        BackupUiState.Success("已彻底删除本地备份")
+                    } else {
+                        BackupUiState.Error("本地备份删除失败，请重试")
+                    }
+                    refreshLocalList()
+                }) { Text("彻底删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteLocalTarget = null }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showRestoreDoneDialog) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("恢复完成") },
+            text = {
+                Text(
+                    "账本文件已替换。请点击「关闭应用」完全退出，" +
+                        "再重新打开「墨麒麟记账」以加载新数据。\n\n" +
+                        "若不退出，可能仍显示旧数据。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showRestoreDoneDialog = false
+                    (context as? android.app.Activity)?.finishAffinity()
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                }) { Text("关闭应用") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ColumnScope.LocalBackupSection(
+    lastInfo: String?,
+    backups: List<File>,
+    working: Boolean,
+    onBackupNow: () -> Unit,
+    onRefresh: () -> Unit,
+    onRestore: (File) -> Unit,
+    onDelete: (File) -> Unit,
+    onExport: (File) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        elevation = CardDefaults.cardElevation(0.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("本地备份", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "打包账本数据库保存在应用私有目录。卸载应用会丢失，重要备份请「导出」到文件。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (lastInfo != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(lastInfo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onBackupNow, enabled = !working) { Text("立即本地备份") }
+                OutlinedButton(onClick = onRefresh, enabled = !working) { Text("刷新") }
+            }
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    Text("本地备份历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(8.dp))
+
+    if (backups.isEmpty()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "还没有本地备份，点「立即本地备份」创建。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    } else {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            elevation = CardDefaults.cardElevation(0.dp)
+        ) {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(backups, key = { it.absolutePath }) { file ->
+                    ListItem(
+                        headlineContent = {
+                            Text(file.name, maxLines = 1, fontSize = 14.sp)
+                        },
+                        supportingContent = {
+                            Text(
+                                "${CloudBackupManager.formatSize(file.length())} · ${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(file.lastModified()))}",
+                                fontSize = 12.sp
+                            )
+                        },
+                        trailingContent = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = { onExport(file) }) { Text("导出") }
+                                TextButton(onClick = { onRestore(file) }) { Text("恢复") }
+                                IconButton(onClick = { onDelete(file) }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "删除",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    )
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.CloudBackupSection(
+    cosConfig: CosConfig,
+    lastInfo: String?,
+    backups: List<CosObjectMeta>,
+    isLoadingList: Boolean,
+    working: Boolean,
+    onBackupNow: () -> Unit,
+    onRefresh: () -> Unit,
+    onRestore: (CosObjectMeta) -> Unit,
+    onDelete: (CosObjectMeta) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        elevation = CardDefaults.cardElevation(0.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("云端备份", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = if (cosConfig.isConfigured) {
+                    "腾讯云 COS · ${cosConfig.host}"
+                } else {
+                    "未配置 COS（点右上角齿轮填写密钥与存储桶 URL）"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (lastInfo != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(lastInfo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onBackupNow, enabled = !working) { Text("立即云备份") }
+                OutlinedButton(onClick = onRefresh, enabled = !working && !isLoadingList) {
+                    if (isLoadingList) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("刷新")
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    Text("云端备份历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(8.dp))
+
+    if (!cosConfig.isConfigured) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "尚未配置对象存储，请点右上角齿轮设置。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    } else if (backups.isEmpty() && !isLoadingList) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "还没有云备份，点「立即云备份」创建第一份。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    } else {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            elevation = CardDefaults.cardElevation(0.dp)
+        ) {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(backups, key = { it.key }) { item ->
+                    ListItem(
+                        headlineContent = {
+                            Text(item.key.substringAfterLast('/'), maxLines = 1, fontSize = 14.sp)
+                        },
+                        supportingContent = {
+                            Text(
+                                "${CloudBackupManager.formatSize(item.size)} · ${item.lastModified.take(19).replace('T', ' ')}",
+                                fontSize = 12.sp
+                            )
+                        },
+                        trailingContent = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = { onRestore(item) }) { Text("恢复") }
+                                IconButton(onClick = { onDelete(item) }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "删除",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    )
+                    HorizontalDivider()
+                }
+            }
+        }
     }
 }
 
@@ -387,7 +703,7 @@ private fun CosSettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    "从 COS 控制台「存储桶 → 基础配置」复制默认访问域名即可，无需再单独填地域。",
+                    "从 COS 控制台复制默认访问域名即可，无需再单独填地域。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -415,6 +731,101 @@ private fun CosSettingsDialog(
                     )
                 )
             }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/**
+ * 备份选项：可不加密，或设置密码后 AES 加密整个备份包。
+ * @param onConfirm password 为 null 表示不加密
+ */
+@Composable
+private fun BackupPasswordDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    onConfirm: (password: CharArray?) -> Unit
+) {
+    var encryptEnabled by remember { mutableStateOf(false) }
+    var password by remember { mutableStateOf("") }
+    var passwordConfirm by remember { mutableStateOf("") }
+    var errorText by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                Text(
+                    "可选择是否为备份包设置密码。加密使用 AES-256，忘记密码将无法恢复。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(
+                        checked = encryptEnabled,
+                        onCheckedChange = {
+                            encryptEnabled = it
+                            errorText = null
+                        }
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("加密备份")
+                }
+                if (encryptEnabled) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = {
+                            password = it
+                            errorText = null
+                        },
+                        label = { Text("密码（建议 8 位以上）") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = passwordConfirm,
+                        onValueChange = {
+                            passwordConfirm = it
+                            errorText = null
+                        },
+                        label = { Text("确认密码") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                errorText?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (!encryptEnabled) {
+                    onConfirm(null)
+                    return@Button
+                }
+                val p = password
+                if (p.length < 4) {
+                    errorText = "密码至少 4 位"
+                    return@Button
+                }
+                if (p != passwordConfirm) {
+                    errorText = "两次密码不一致"
+                    return@Button
+                }
+                onConfirm(p.toCharArray())
+            }) {
+                Text(if (encryptEnabled) "加密备份" else "不加密备份")
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }

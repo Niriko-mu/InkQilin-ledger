@@ -35,47 +35,55 @@ object CloudBackupManager {
         }
     }
 
-    /** checkpoint WAL 后打包数据库文件 */
-    suspend fun exportDatabaseZip(context: Context): LocalExport = withContext(Dispatchers.IO) {
-        val db = AppDatabase.getDatabase(context)
-        // 将 WAL 合入主库，避免备份不完整
-        runCatching {
-            db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").use { it.moveToFirst() }
-        }
-
-        val dbFile = context.getDatabasePath(DB_NAME)
-        val wal = context.getDatabasePath("$DB_NAME-wal")
-        val shm = context.getDatabasePath("$DB_NAME-shm")
-        if (!dbFile.exists()) error("找不到本地数据库")
-
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val fileName = "ledger_$ts.zip"
-
-        val bos = ByteArrayOutputStream()
-        ZipOutputStream(bos).use { zos ->
-            fun putFile(f: File, entryName: String) {
-                if (!f.exists() || f.length() == 0L) return
-                zos.putNextEntry(ZipEntry(entryName))
-                f.inputStream().use { it.copyTo(zos) }
-                zos.closeEntry()
+    /**
+     * 导出数据库；若 [password] 非空则 AES-GCM 加密整包。
+     */
+    suspend fun exportDatabaseZip(context: Context, password: CharArray? = null): LocalExport =
+        withContext(Dispatchers.IO) {
+            val db = AppDatabase.getDatabase(context)
+            runCatching {
+                db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").use { it.moveToFirst() }
             }
-            putFile(dbFile, DB_NAME)
-            putFile(wal, "$DB_NAME-wal")
-            putFile(shm, "$DB_NAME-shm")
-        }
-        val bytes = bos.toByteArray()
-        LocalExport(bytes, fileName, bytes.size.toLong())
-    }
 
-    /** 上传备份到 COS */
-    suspend fun uploadBackup(context: Context, config: CosConfig): CosObjectMeta {
-        val export = exportDatabaseZip(context)
+            val dbFile = context.getDatabasePath(DB_NAME)
+            val wal = context.getDatabasePath("$DB_NAME-wal")
+            val shm = context.getDatabasePath("$DB_NAME-shm")
+            if (!dbFile.exists()) error("找不到本地数据库")
+
+            val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val encrypted = password != null && password.isNotEmpty()
+            val fileName = if (encrypted) "ledger_${ts}_enc.zip" else "ledger_$ts.zip"
+
+            val bos = ByteArrayOutputStream()
+            ZipOutputStream(bos).use { zos ->
+                fun putFile(f: File, entryName: String) {
+                    if (!f.exists() || f.length() == 0L) return
+                    zos.putNextEntry(ZipEntry(entryName))
+                    f.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
+                putFile(dbFile, DB_NAME)
+                putFile(wal, "$DB_NAME-wal")
+                putFile(shm, "$DB_NAME-shm")
+            }
+            val raw = bos.toByteArray()
+            val bytes = if (encrypted) BackupCrypto.encrypt(raw, password!!) else raw
+            LocalExport(bytes, fileName, bytes.size.toLong())
+        }
+
+    /** 上传备份到 COS；password 非空则加密 */
+    suspend fun uploadBackup(
+        context: Context,
+        config: CosConfig,
+        password: CharArray? = null
+    ): CosObjectMeta {
+        val export = exportDatabaseZip(context, password)
         val key = "${prefixOf(config)}/${export.fileName}"
         CosClient.putObject(
             config = config,
             key = key,
             bytes = export.bytes,
-            contentType = "application/zip"
+            contentType = "application/octet-stream"
         )
         return CosObjectMeta(
             key = key,
@@ -91,14 +99,42 @@ object CloudBackupManager {
     }
 
     /**
-     * 下载并恢复数据库。
-     * 调用后应提示用户重启应用以完全加载。
+     * 下载并恢复数据库；若为加密包须提供 [password]。
      */
-    suspend fun downloadAndRestore(context: Context, config: CosConfig, key: String): Unit =
-        withContext(Dispatchers.IO) {
-            val zipBytes = CosClient.getObject(config, key)
-            restoreZipBytes(context, zipBytes)
+    suspend fun downloadAndRestore(
+        context: Context,
+        config: CosConfig,
+        key: String,
+        password: CharArray? = null
+    ): Unit = withContext(Dispatchers.IO) {
+        val raw = CosClient.getObject(config, key)
+        val zipBytes = if (BackupCrypto.isEncrypted(raw)) {
+            BackupCrypto.decrypt(raw, password ?: charArrayOf())
+        } else {
+            raw
         }
+        restoreZipBytes(context, zipBytes)
+    }
+
+    /** 读取文件头判断是否加密备份 */
+    fun isLocalBackupEncrypted(file: File): Boolean {
+        if (!file.exists() || file.length() < 5) return false
+        val header = ByteArray(5)
+        file.inputStream().use { input ->
+            var read = 0
+            while (read < 5) {
+                val n = input.read(header, read, 5 - read)
+                if (n < 0) break
+                read += n
+            }
+            if (read < 5) return false
+        }
+        return header[0] == 'I'.code.toByte() &&
+            header[1] == 'Q'.code.toByte() &&
+            header[2] == 'B'.code.toByte() &&
+            header[3] == 'K'.code.toByte() &&
+            header[4] == '1'.code.toByte()
+    }
 
     fun restoreZipBytes(context: Context, zipBytes: ByteArray) {
         val files = mutableMapOf<String, ByteArray>()
@@ -130,8 +166,13 @@ object CloudBackupManager {
         files["$DB_NAME-shm"]?.let { shm.outputStream().use { out -> out.write(it) } }
     }
 
+    /** 删除云端对象，并确认远端已不存在 */
     suspend fun deleteBackup(config: CosConfig, key: String) {
         CosClient.deleteObject(config, key)
+        val stillThere = runCatching { CosClient.objectExists(config, key) }.getOrDefault(true)
+        if (stillThere) {
+            error("云端对象删除后仍存在，请检查存储桶是否开启了版本控制")
+        }
     }
 
     fun formatSize(bytes: Long): String {
@@ -141,5 +182,75 @@ object CloudBackupManager {
         val mb = kb / 1024.0
         if (mb < 1024) return String.format(Locale.US, "%.1f MB", mb)
         return String.format(Locale.US, "%.2f GB", mb / 1024.0)
+    }
+
+    // ── 本地备份（应用私有目录，卸载会丢失；可再导出到系统文件） ──
+
+    fun localBackupDir(context: Context): File =
+        File(context.filesDir, "backups").apply { mkdirs() }
+
+    /** 生成备份写入应用私有 backups 目录；password 非空则加密 */
+    suspend fun createLocalBackup(context: Context, password: CharArray? = null): File =
+        withContext(Dispatchers.IO) {
+            val export = exportDatabaseZip(context, password)
+            val target = File(localBackupDir(context), export.fileName)
+            target.outputStream().use { it.write(export.bytes) }
+            target
+        }
+
+    fun listLocalBackups(context: Context): List<File> {
+        val dir = localBackupDir(context)
+        return dir.listFiles { f -> f.isFile && f.name.endsWith(".zip") }
+            ?.sortedByDescending { it.lastModified() }
+            ?: emptyList()
+    }
+
+    fun restoreLocalBackup(context: Context, file: File, password: CharArray? = null) {
+        if (!file.exists()) error("本地备份文件不存在")
+        val raw = file.readBytes()
+        val zipBytes = if (BackupCrypto.isEncrypted(raw)) {
+            BackupCrypto.decrypt(raw, password ?: charArrayOf())
+        } else {
+            raw
+        }
+        restoreZipBytes(context, zipBytes)
+    }
+
+    /**
+     * 彻底删除本地备份：先用零字节覆写文件内容，再 unlink。
+     * 注意：闪存/系统快照层面无法保证物理抹除，但可显著降低普通恢复难度。
+     */
+    fun deleteLocalBackup(file: File): Boolean {
+        if (!file.exists()) return true
+        return try {
+            val length = file.length()
+            if (length > 0L) {
+                java.io.RandomAccessFile(file, "rw").use { raf ->
+                    raf.seek(0L)
+                    val chunk = ByteArray(1024 * 256)
+                    var written = 0L
+                    while (written < length) {
+                        val n = minOf(chunk.size.toLong(), length - written).toInt()
+                        raf.write(chunk, 0, n)
+                        written += n
+                    }
+                    raf.fd.sync()
+                }
+            }
+            val deleted = file.delete()
+            deleted && !file.exists()
+        } catch (_: Exception) {
+            runCatching { file.delete() }
+            !file.exists()
+        }
+    }
+
+    /** 把本地备份 zip 字节写到 SAF 选择的 Uri */
+    fun copyLocalBackupToUri(context: Context, file: File, uri: android.net.Uri): Boolean {
+        return runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                file.inputStream().use { it.copyTo(out) }
+            } != null
+        }.getOrDefault(false)
     }
 }

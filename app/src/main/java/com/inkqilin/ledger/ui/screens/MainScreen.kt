@@ -176,7 +176,7 @@ fun MainScreen(
         currentRoute == "currency_management" -> "币种卡片管理"
         currentRoute == "keyword_category_management" -> "关键词管理"
         currentRoute == "ai_config" -> "AI API 配置"
-        currentRoute == "cloud_backup" -> "云备份"
+        currentRoute == "cloud_backup" -> "数据备份"
         currentRoute == "ocr_batch_recognition" -> "OCR 批量识别"
         currentRoute == "asset_management" -> "资产管理"
         currentRoute?.startsWith("cycle_bill_edit") == true -> {

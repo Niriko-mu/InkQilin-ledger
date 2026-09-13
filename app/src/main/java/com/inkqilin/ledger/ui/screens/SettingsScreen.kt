@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.graphics.Color
@@ -309,6 +310,8 @@ fun SettingsScreen(
     var updateSectionExpanded by rememberSaveable { mutableStateOf(false) }
     var dataSectionExpanded by rememberSaveable { mutableStateOf(false) }
     var widgetSectionExpanded by rememberSaveable { mutableStateOf(false) }
+    var showAboutSheet by rememberSaveable { mutableStateOf(false) }
+    var showUsageGuide by rememberSaveable { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp)) {
         // region 1. 应用版本
@@ -1000,13 +1003,13 @@ fun SettingsScreen(
     }
 
 
-        SettingsSectionHeader("数据管理", "导入、导出与云备份", dataSectionExpanded) { dataSectionExpanded = !dataSectionExpanded }
+        SettingsSectionHeader("数据管理", "导入、导出与数据备份", dataSectionExpanded) { dataSectionExpanded = !dataSectionExpanded }
         AnimatedVisibility(visible = dataSectionExpanded) {
         Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), elevation = CardDefaults.cardElevation(0.dp)) {
             Column {
                 ListItem(
-                    headlineContent = { Text("云备份") },
-                    supportingContent = { Text("加密打包账本到腾讯云 COS，可恢复到本机") },
+                    headlineContent = { Text("数据备份") },
+                    supportingContent = { Text("本地备份 / 腾讯云 COS 云备份，可恢复账本") },
                     leadingContent = { Icon(Icons.Default.Lock, contentDescription = null) },
                     trailingContent = { Icon(Icons.Default.KeyboardArrowRight, contentDescription = null) },
                     modifier = Modifier.clickable { onNavigateToCloudBackup() }
@@ -1198,21 +1201,139 @@ fun SettingsScreen(
                         }
                     )
                 }
-                Spacer(modifier = Modifier.height(0.5.dp))
-                ListItem(
-                    headlineContent = { Text("关于 墨麒麟记账") },
-                    supportingContent = { Text("版本 ${viewModel.getCurrentVersionName(context)} · GitHub 仓库") },
-                    leadingContent = { Icon(Icons.Default.Share, contentDescription = null) },
-                    modifier = Modifier.clickable {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Niriko-mu/InkQilin-ledger"))
-                        context.startActivity(intent)
-                    }
-                )
             }
         }
         }
+
+        // 一级节点：关于（与数据管理等分区同级）
+        var aboutSectionExpanded by rememberSaveable { mutableStateOf(false) }
+        SettingsSectionHeader(
+            "关于 墨麒麟记账",
+            "版本 ${viewModel.getCurrentVersionName(context)} · 仓库与使用引导",
+            aboutSectionExpanded
+        ) { aboutSectionExpanded = !aboutSectionExpanded }
+        AnimatedVisibility(visible = aboutSectionExpanded) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                shape = RoundedCornerShape(18.dp),
+                elevation = CardDefaults.cardElevation(0.dp)
+            ) {
+                ListItem(
+                    headlineContent = { Text("关于 墨麒麟记账") },
+                    supportingContent = { Text("版本、开源仓库与使用引导") },
+                    leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
+                    trailingContent = { Icon(Icons.Default.KeyboardArrowRight, contentDescription = null) },
+                    modifier = Modifier.clickable { showAboutSheet = true }
+                )
+            }
+        }
+
         val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding().coerceAtLeast(6.dp)
         Spacer(modifier = Modifier.height(navBarBottomPadding + 76.dp))
+    }
+
+    // 关于抽屉
+    if (showAboutSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showAboutSheet = false },
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 8.dp)
+                    .padding(bottom = 32.dp)
+            ) {
+                Text(
+                    "关于 墨麒麟记账",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "版本 ${viewModel.getCurrentVersionName(context)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "一款基于 Jetpack Compose 的 Android 个人记账应用。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(Modifier.height(20.dp))
+                Text("开源仓库", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+
+                ListItem(
+                    headlineContent = { Text("Gitee 仓库") },
+                    supportingContent = { Text("gitee.com/Murchey/inkqinlin-ledger", fontSize = 12.sp) },
+                    leadingContent = { Icon(Icons.Default.Share, contentDescription = null) },
+                    modifier = Modifier.clickable {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("https://gitee.com/Murchey/inkqinlin-ledger"))
+                            )
+                        }
+                    }
+                )
+                HorizontalDivider()
+                ListItem(
+                    headlineContent = { Text("GitHub 仓库") },
+                    supportingContent = { Text("github.com/Niriko-mu/InkQilin-ledger", fontSize = 12.sp) },
+                    leadingContent = { Icon(Icons.Default.Share, contentDescription = null) },
+                    modifier = Modifier.clickable {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Niriko-mu/InkQilin-ledger"))
+                            )
+                        }
+                    }
+                )
+
+                Spacer(Modifier.height(20.dp))
+                Button(
+                    onClick = {
+                        showAboutSheet = false
+                        showUsageGuide = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("使用引导")
+                }
+            }
+        }
+    }
+
+    // 使用引导
+    if (showUsageGuide) {
+        AlertDialog(
+            onDismissRequest = { showUsageGuide = false },
+            title = { Text("使用引导") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("1. 首页底部「+」快速记一笔，可填金额、分类与备注。")
+                    Text("2. 金额键盘支持四则运算与括号，例如 (20+5)×2。")
+                    Text("3. 统计页按周/月/年查看收支，并可按分类钻取。")
+                    Text("4. 设置里可开关基础版/智能版、主题色、人情账本与桌面小组件。")
+                    Text("5. 数据管理支持 Excel 导入导出，以及本地/云端备份与恢复。")
+                    Text("6. 更新检测默认走 Gitee Release，可在设置中改检测仓库。")
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "更多说明见 Gitee / GitHub 仓库 README。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showUsageGuide = false }) { Text("知道了") }
+            }
+        )
     }
 }
 

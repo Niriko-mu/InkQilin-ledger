@@ -3,7 +3,7 @@ package com.inkqilin.ledger.util
 import android.util.Xml
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -67,30 +67,47 @@ object CosClient {
         contentType: String = "application/octet-stream"
     ): Unit = withContext(Dispatchers.IO) {
         require(config.isConfigured) { "COS 未配置" }
-        val body = bytes.toRequestBody(contentType.toMediaType())
+        // 不把 media type 写进 RequestBody，Content-Type 只从 header 发出，保证与签名一致
+        val body = bytes.toRequestBody(null)
+        val path = objectPath(key)
         val request = Request.Builder()
-            .url("https://${config.host}/${encodeKey(key)}")
+            .url("https://${config.host}$path")
             .put(body)
-            .header("Host", config.host)
             .header("Content-Type", contentType)
-            .apply { addAuth(config, "PUT", key, headersToSign = mapOf("host" to config.host, "content-type" to contentType)) }
+            .apply {
+                addAuth(
+                    config,
+                    "PUT",
+                    uriPath = path,
+                    // Host 由 OkHttp 按 URL 自动填写，值与 config.host 相同
+                    headersToSign = mapOf("host" to config.host)
+                )
+            }
             .build()
+        android.util.Log.d("CosClient", "PUT path=$path host=${config.host}")
         val response = client.newCall(request).execute()
         response.use {
             if (!it.isSuccessful) {
                 val err = it.body?.string().orEmpty()
-                error("上传失败 HTTP ${it.code}: ${err.take(300)}")
+                error("上传失败 HTTP ${it.code}: ${err.take(400)}")
             }
         }
     }
 
     suspend fun getObject(config: CosConfig, key: String): ByteArray = withContext(Dispatchers.IO) {
         require(config.isConfigured) { "COS 未配置" }
+        val path = objectPath(key)
         val request = Request.Builder()
-            .url("https://${config.host}/${encodeKey(key)}")
+            .url("https://${config.host}$path")
             .get()
-            .header("Host", config.host)
-            .apply { addAuth(config, "GET", key, headersToSign = mapOf("host" to config.host)) }
+            .apply {
+                addAuth(
+                    config,
+                    "GET",
+                    uriPath = path,
+                    headersToSign = mapOf("host" to config.host)
+                )
+            }
             .build()
         val response = client.newCall(request).execute()
         response.use {
@@ -104,17 +121,54 @@ object CosClient {
 
     suspend fun deleteObject(config: CosConfig, key: String): Unit = withContext(Dispatchers.IO) {
         require(config.isConfigured) { "COS 未配置" }
+        val path = objectPath(key)
         val request = Request.Builder()
-            .url("https://${config.host}/${encodeKey(key)}")
+            .url("https://${config.host}$path")
             .delete()
-            .header("Host", config.host)
-            .apply { addAuth(config, "DELETE", key, headersToSign = mapOf("host" to config.host)) }
+            .apply {
+                addAuth(
+                    config,
+                    "DELETE",
+                    uriPath = path,
+                    headersToSign = mapOf("host" to config.host)
+                )
+            }
             .build()
         val response = client.newCall(request).execute()
         response.use {
-            if (!it.isSuccessful && it.code != 204) {
+            // 成功删除一般为 204/200；其它状态视为未删除
+            if (!it.isSuccessful) {
                 val err = it.body?.string().orEmpty()
                 error("删除失败 HTTP ${it.code}: ${err.take(300)}")
+            }
+        }
+    }
+
+    /** HEAD 对象是否存在；存在返回 true，404 返回 false */
+    suspend fun objectExists(config: CosConfig, key: String): Boolean = withContext(Dispatchers.IO) {
+        require(config.isConfigured) { "COS 未配置" }
+        val path = objectPath(key)
+        val request = Request.Builder()
+            .url("https://${config.host}$path")
+            .head()
+            .apply {
+                addAuth(
+                    config,
+                    "HEAD",
+                    uriPath = path,
+                    headersToSign = mapOf("host" to config.host)
+                )
+            }
+            .build()
+        val response = client.newCall(request).execute()
+        response.use {
+            when (it.code) {
+                200 -> true
+                404 -> false
+                else -> {
+                    val err = it.body?.string().orEmpty()
+                    error("探测对象失败 HTTP ${it.code}: ${err.take(200)}")
+                }
             }
         }
     }
@@ -122,16 +176,19 @@ object CosClient {
     suspend fun listObjects(config: CosConfig, prefix: String): List<CosObjectMeta> =
         withContext(Dispatchers.IO) {
             require(config.isConfigured) { "COS 未配置" }
-            val encodedPrefix = URLEncoder.encode(prefix, "UTF-8")
+            val url = HttpUrl.Builder()
+                .scheme("https")
+                .host(config.host)
+                .addQueryParameter("prefix", prefix)
+                .build()
             val request = Request.Builder()
-                .url("https://${config.host}/?prefix=$encodedPrefix")
+                .url(url)
                 .get()
-                .header("Host", config.host)
                 .apply {
                     addAuth(
                         config,
                         "GET",
-                        key = "",
+                        uriPath = "/",
                         query = mapOf("prefix" to prefix),
                         headersToSign = mapOf("host" to config.host)
                     )
@@ -190,11 +247,14 @@ object CosClient {
     /**
      * 腾讯云 COS 请求签名（q-sign-algorithm=sha1）。
      * @see https://cloud.tencent.com/document/product/436/7778
+     *
+     * 注意：HttpParameters 中的 Key/Value 必须按 COS 规则 URL 编码
+     * （空格为 %20，不能用 +），否则会 SignatureDoesNotMatch。
      */
     private fun Request.Builder.addAuth(
         config: CosConfig,
         method: String,
-        key: String,
+        uriPath: String,
         query: Map<String, String> = emptyMap(),
         headersToSign: Map<String, String>
     ): Request.Builder {
@@ -202,23 +262,27 @@ object CosClient {
         val keyTime = "${now - 60};${now + 600}"
         val signKey = hmacSha1Hex(config.secretKey, keyTime)
 
-        val uriPath = "/" + encodeKey(key).let { if (it.isEmpty()) "" else it }
-        val paramList = query.keys.sorted().joinToString(";") { it.lowercase() }
-        val headerList = headersToSign.keys.sorted().joinToString(";") { it.lowercase() }
+        val path = if (uriPath.startsWith("/")) uriPath else "/$uriPath"
+        val paramList = query.keys.map { cosUrlEncode(it.lowercase()) }.sorted().joinToString(";")
+        val headerList = headersToSign.keys.map { it.lowercase() }.sorted().joinToString(";")
 
-        val paramString = query.toSortedMap()
-            .map { (k, v) -> "${k.lowercase()}=${v}" }
-            .joinToString("&")
-        val headerString = headersToSign.toSortedMap()
-            .map { (k, v) -> "${k.lowercase()}=${v.trim()}" }
-            .joinToString("&")
+        val paramString = query.entries
+            .sortedBy { it.key.lowercase() }
+            .joinToString("&") { (k, v) -> "${cosUrlEncode(k.lowercase())}=${cosUrlEncode(v)}" }
+        val headerString = headersToSign.entries
+            .sortedBy { it.key.lowercase() }
+            .joinToString("&") { (k, v) -> "${k.lowercase()}=${v.trim()}" }
 
         val httpString = buildString {
             append(method.lowercase()).append('\n')
-            append(uriPath).append('\n')
+            append(path).append('\n')
             append(paramString).append('\n')
             append(headerString).append('\n')
         }
+        android.util.Log.d(
+            "CosClient",
+            "sign method=${method.lowercase()} path=$path params=$paramString headers=$headerString\nhttpString=\n$httpString"
+        )
         val httpStringSha1 = sha1Hex(httpString)
         val stringToSign = "sha1\n$keyTime\n$httpStringSha1\n"
         val signature = hmacSha1Hex(signKey, stringToSign)
@@ -232,12 +296,22 @@ object CosClient {
         return this
     }
 
-    /** COS 对象 key 的 URL 编码（保留 /） */
-    private fun encodeKey(key: String): String {
-        if (key.isEmpty()) return ""
-        return key.split("/").joinToString("/") { segment ->
-            URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
-        }
+    /** 对象路径：/backups/v1/xxx.zip（签名用，分段编码） */
+    private fun objectPath(key: String): String {
+        if (key.isBlank()) return "/"
+        return "/" + key.trimStart('/').split("/").joinToString("/") { cosUrlEncode(it) }
+    }
+
+    /**
+     * COS 签名用 URL 编码：
+     * UTF-8，空格 → %20（不是 +），* → %2A，~ 不编码。
+     */
+    private fun cosUrlEncode(value: String): String {
+        if (value.isEmpty()) return ""
+        return URLEncoder.encode(value, "UTF-8")
+            .replace("+", "%20")
+            .replace("*", "%2A")
+            .replace("%7E", "~")
     }
 
     private fun sha1Hex(data: String): String {
