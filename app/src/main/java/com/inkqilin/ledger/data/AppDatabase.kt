@@ -340,7 +340,7 @@ abstract class AppDatabase : RoomDatabase() {
                     // DELETE 时用零覆盖行内容，降低从 db 文件残留页恢复账单的可能
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
-                            db.execSQL("PRAGMA secure_delete = ON")
+                            runCatching { db.execSQL("PRAGMA secure_delete = ON") }
                         }
                     })
                     .build()

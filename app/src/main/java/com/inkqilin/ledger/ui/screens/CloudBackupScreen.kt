@@ -350,9 +350,12 @@ fun CloudBackupScreen(
                                         CloudBackupManager.restoreLocalBackup(context, confirmRef.file, pwdOrNull)
                                 }
                             }
-                            uiState = BackupUiState.Success("恢复完成")
-                            showRestoreDoneDialog = true
+                            // 恢复成功后 Room 单例已关闭，绝不能再走 Compose 继续跑旧 DAO
+                            // 直接结束进程，用户重新打开即冷启动加载新库
+                            (context as? android.app.Activity)?.finishAffinity()
+                            android.os.Process.killProcess(android.os.Process.myPid())
                         } catch (e: Exception) {
+                            // 失败时 Room 可能仍可用（校验阶段未 close）或已回滚
                             uiState = BackupUiState.Error(e.message ?: "恢复失败")
                         }
                     }

@@ -136,34 +136,84 @@ object CloudBackupManager {
             header[4] == '1'.code.toByte()
     }
 
-    fun restoreZipBytes(context: Context, zipBytes: ByteArray) {
-        val files = mutableMapOf<String, ByteArray>()
-        ZipInputStream(zipBytes.inputStream()).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory) {
-                    files[entry.name] = zis.readBytes()
-                }
-                entry = zis.nextEntry
-            }
+    private fun hasSqliteMagic(bytes: ByteArray): Boolean {
+        // "SQLite format 3\0"
+        val magic = byteArrayOf(
+            0x53, 0x51, 0x4C, 0x69, 0x74, 0x65, 0x20, 0x66,
+            0x6F, 0x72, 0x6D, 0x61, 0x74, 0x20, 0x33, 0x00
+        )
+        if (bytes.size < magic.size) return false
+        for (i in magic.indices) {
+            if (bytes[i] != magic[i]) return false
         }
-        val mainDb = files[DB_NAME] ?: error("备份包中缺少 $DB_NAME")
+        return true
+    }
 
-        // 先关闭 Room 并丢弃单例，再覆盖文件
-        AppDatabase.closeAndClear()
+    /**
+     * 用备份 zip 覆盖本地库。
+     * 会先校验 SQLite 文件头，并自动做「恢复前安全副本」；失败时回滚。
+     */
+    fun restoreZipBytes(context: Context, zipBytes: ByteArray) {
+        if (zipBytes.isEmpty()) error("备份内容为空，已取消恢复")
+        val files = mutableMapOf<String, ByteArray>()
+        try {
+            ZipInputStream(zipBytes.inputStream()).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        files[entry.name] = zis.readBytes()
+                    }
+                    entry = zis.nextEntry
+                }
+            }
+        } catch (e: Exception) {
+            error("备份包无法解析，已取消恢复：${e.message}")
+        }
+
+        val mainDb = files[DB_NAME]
+            ?: error("备份包中缺少 $DB_NAME，已取消恢复")
+        if (mainDb.size < 100 || !hasSqliteMagic(mainDb)) {
+            error("备份包中的数据库无效或已损坏，已取消恢复")
+        }
 
         val dbFile = context.getDatabasePath(DB_NAME)
         val wal = context.getDatabasePath("$DB_NAME-wal")
         val shm = context.getDatabasePath("$DB_NAME-shm")
 
-        dbFile.parentFile?.mkdirs()
-        // 覆盖前清掉旧 WAL，避免混库
-        wal.delete()
-        shm.delete()
+        // 恢复前安全副本（放在应用私有目录，便于失败回滚）
+        val safetyDir = File(localBackupDir(context), "pre_restore")
+        safetyDir.mkdirs()
+        val safetyFile = File(safetyDir, "ledger_database_safety.db")
+        val walSafety = File(safetyDir, "ledger_database_safety.db-wal")
+        val shmSafety = File(safetyDir, "ledger_database_safety.db-shm")
+        runCatching { safetyFile.delete() }
+        runCatching { walSafety.delete() }
+        runCatching { shmSafety.delete() }
+        if (dbFile.exists()) {
+            dbFile.copyTo(safetyFile, overwrite = true)
+        }
+        if (wal.exists()) runCatching { wal.copyTo(walSafety, overwrite = true) }
+        if (shm.exists()) runCatching { shm.copyTo(shmSafety, overwrite = true) }
 
-        dbFile.outputStream().use { it.write(mainDb) }
-        files["$DB_NAME-wal"]?.let { wal.outputStream().use { out -> out.write(it) } }
-        files["$DB_NAME-shm"]?.let { shm.outputStream().use { out -> out.write(it) } }
+        AppDatabase.closeAndClear()
+
+        try {
+            dbFile.parentFile?.mkdirs()
+            wal.delete()
+            shm.delete()
+            dbFile.outputStream().use { it.write(mainDb) }
+            // 不恢复包内 wal/shm，避免与新主库不一致；下次打开会重建
+        } catch (e: Exception) {
+            // 回滚到恢复前
+            runCatching {
+                if (safetyFile.exists()) {
+                    safetyFile.copyTo(dbFile, overwrite = true)
+                    if (walSafety.exists()) walSafety.copyTo(wal, overwrite = true)
+                    if (shmSafety.exists()) shmSafety.copyTo(shm, overwrite = true)
+                }
+            }
+            error("恢复写入失败，已尝试回滚：${e.message}")
+        }
     }
 
     /** 删除云端对象，并确认远端已不存在 */
