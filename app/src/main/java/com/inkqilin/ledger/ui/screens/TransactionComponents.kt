@@ -55,12 +55,14 @@ fun SwipeableTransactionItem(
     viewModel: TransactionViewModel,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
-    onClick: () -> Unit = onEdit
+    onClick: () -> Unit = onEdit,
+    /** 为 true 时降低卡片不透明度，让首页背景图透出 */
+    translucent: Boolean = false
 ) {
     val density = LocalDensity.current
     val menuWidth = 120.dp
     val menuWidthPx = with(density) { menuWidth.toPx() }
-    
+
     var offsetX by remember(transaction.id) { mutableFloatStateOf(0f) }
     val draggableState = rememberDraggableState { delta ->
         val newOffset = (offsetX + delta).coerceIn(-menuWidthPx, 0f)
@@ -69,13 +71,15 @@ fun SwipeableTransactionItem(
 
     val expenseColorHex by viewModel.expenseColor.collectAsState()
     val expenseColor = Color(expenseColorHex.toColorInt())
+    val trackAlpha = if (translucent) 0.12f else 0.5f
+    val cardAlpha = if (translucent) 0.32f else 0.8f
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = trackAlpha))
     ) {
         Row(
             modifier = Modifier
@@ -107,7 +111,7 @@ fun SwipeableTransactionItem(
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), 0) }
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = cardAlpha))
                 .draggable(
                     state = draggableState,
                     orientation = Orientation.Horizontal,
@@ -121,7 +125,7 @@ fun SwipeableTransactionItem(
                     }
                 )
         ) {
-            TransactionItem(transaction, viewModel, onClick = onClick)
+            TransactionItem(transaction, viewModel, onClick = onClick, translucent = translucent)
         }
     }
 }
@@ -292,7 +296,8 @@ fun CategoryEditDialog(
 fun TransactionItem(
     transaction: Transaction,
     viewModel: TransactionViewModel,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    translucent: Boolean = false
 ) {
     val sdf = SimpleDateFormat("MM月dd日", Locale.getDefault())
     val dateStr = sdf.format(Date(transaction.date))
@@ -311,15 +316,21 @@ fun TransactionItem(
     val expenseColor = Color(android.graphics.Color.parseColor(expenseColorHex))
 
     val interactionSource = remember { MutableInteractionSource() }
-    
+    // Card 本身必须透明/半透明，否则外层半透明底会被完全盖住
+    val cardContainer = if (translucent) {
+        Color.Transparent
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .pressScale(interactionSource), // Use our custom iOS-style press down
+            .pressScale(interactionSource),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            disabledContainerColor = MaterialTheme.colorScheme.surface
+            containerColor = cardContainer,
+            disabledContainerColor = cardContainer
         ),
         elevation = CardDefaults.cardElevation(
             defaultElevation = 0.dp,

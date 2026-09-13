@@ -95,6 +95,8 @@ class ThemeManager(private val context: Context) {
     private val AI_ALERTS_JSON_KEY = stringPreferencesKey("ai_alerts_json")
     private val AI_ANALYSIS_FAILED_KEY = booleanPreferencesKey("ai_analysis_failed")
     private val HOME_CARD_COLOR_KEY = stringPreferencesKey("home_card_color")
+    private val HOME_BG_IMAGE_PATH_KEY = stringPreferencesKey("home_bg_image_path")
+    private val HOME_BG_OPACITY_KEY = doublePreferencesKey("home_bg_opacity")
 private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
     private val WIDGET_QUICK_CATEGORIES_KEY = stringPreferencesKey("widget_quick_categories")
 
@@ -271,6 +273,16 @@ private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
 
     val homeCardColor: Flow<String?> = context.dataStore.data.map { preferences ->
         preferences[HOME_CARD_COLOR_KEY]
+    }
+
+    /** 首页背景图本地文件绝对路径；null 表示未设置 */
+    val homeBgImagePath: Flow<String?> = context.dataStore.data.map { preferences ->
+        preferences[HOME_BG_IMAGE_PATH_KEY]?.takeIf { it.isNotBlank() }
+    }
+
+    /** 首页背景不透明度 0f–1f，默认 0.35 */
+    val homeBgOpacity: Flow<Float> = context.dataStore.data.map { preferences ->
+        ((preferences[HOME_BG_OPACITY_KEY] ?: 0.35).toFloat()).coerceIn(0.05f, 1f)
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {
@@ -473,6 +485,22 @@ private val WIDGET_SHOW_AMOUNT_KEY = booleanPreferencesKey("widget_show_amount")
             } else {
                 preferences[HOME_CARD_COLOR_KEY] = colorHex
             }
+        }
+    }
+
+    suspend fun setHomeBgImagePath(path: String?) {
+        context.dataStore.edit { preferences ->
+            if (path.isNullOrBlank()) {
+                preferences.remove(HOME_BG_IMAGE_PATH_KEY)
+            } else {
+                preferences[HOME_BG_IMAGE_PATH_KEY] = path
+            }
+        }
+    }
+
+    suspend fun setHomeBgOpacity(opacity: Float) {
+        context.dataStore.edit { preferences ->
+            preferences[HOME_BG_OPACITY_KEY] = opacity.coerceIn(0.05f, 1f).toDouble()
         }
     }
 

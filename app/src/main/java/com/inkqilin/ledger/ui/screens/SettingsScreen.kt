@@ -313,6 +313,7 @@ fun SettingsScreen(
     var widgetSectionExpanded by rememberSaveable { mutableStateOf(false) }
     var showAboutSheet by rememberSaveable { mutableStateOf(false) }
     var showUsageGuide by rememberSaveable { mutableStateOf(false) }
+    var showHomeBgSheet by rememberSaveable { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp)) {
         // region 1. 应用版本
@@ -646,6 +647,24 @@ fun SettingsScreen(
                         }
                     }
                 }
+
+                // 显示设置一级项：首页背景图（不放在主题色展开区内）
+                Spacer(modifier = Modifier.height(0.5.dp))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                val homeBgPathForRow by viewModel.homeBgImagePath.collectAsState()
+                val homeBgOpacityForRow by viewModel.homeBgOpacity.collectAsState()
+                ListItem(
+                    headlineContent = { Text("首页背景图") },
+                    supportingContent = {
+                        Text(
+                            if (homeBgPathForRow.isNullOrBlank()) "未设置 · 点击选择图片"
+                            else "已设置 · 不透明度 ${(homeBgOpacityForRow * 100).toInt()}%"
+                        )
+                    },
+                    leadingContent = { Icon(Icons.Default.Star, contentDescription = null) },
+                    trailingContent = { Icon(Icons.Default.KeyboardArrowRight, contentDescription = null) },
+                    modifier = Modifier.clickable { showHomeBgSheet = true }
+                )
             }
         }
 
@@ -1302,6 +1321,121 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("使用引导")
+                }
+            }
+        }
+    }
+
+    // 首页背景图抽屉
+    if (showHomeBgSheet) {
+        val homeBgPath by viewModel.homeBgImagePath.collectAsState()
+        val savedOpacity by viewModel.homeBgOpacity.collectAsState()
+        // 预览与滑条用草稿值，点「确定」才写入
+        var draftOpacity by remember(showHomeBgSheet) { mutableFloatStateOf(savedOpacity) }
+        val bgPickerLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.GetContent()
+        ) { uri ->
+            uri?.let { viewModel.importHomeBackground(context, it) }
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = { showHomeBgSheet = false },
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 8.dp)
+                    .padding(bottom = 32.dp)
+            ) {
+                Text(
+                    "首页背景图",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "从相册选择图片作为首页背景；账单列表会半透明显示，便于透出背景。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    val file = homeBgPath?.let { java.io.File(it) }
+                    if (file != null && file.exists()) {
+                        coil.compose.AsyncImage(
+                            model = file,
+                            contentDescription = "背景预览",
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            alpha = draftOpacity.coerceIn(0.05f, 1f),
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Text(
+                            "尚未选择背景图",
+                            modifier = Modifier.align(Alignment.Center),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { bgPickerLauncher.launch("image/*") },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(if (homeBgPath.isNullOrBlank()) "选择图片" else "更换图片")
+                    }
+                    if (!homeBgPath.isNullOrBlank()) {
+                        OutlinedButton(
+                            onClick = { viewModel.clearHomeBackground() },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("清除背景")
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    "不透明度 ${(draftOpacity * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = draftOpacity,
+                    onValueChange = { draftOpacity = it },
+                    valueRange = 0.05f..1f
+                )
+                Text(
+                    "值越大背景越清晰；建议 20%–50% 以保证账单可读性。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(Modifier.height(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { showHomeBgSheet = false },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("取消") }
+                    Button(
+                        onClick = {
+                            viewModel.setHomeBgOpacity(draftOpacity)
+                            showHomeBgSheet = false
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("确定") }
                 }
             }
         }

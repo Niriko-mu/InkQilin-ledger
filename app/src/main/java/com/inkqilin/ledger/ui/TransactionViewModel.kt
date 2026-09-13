@@ -22,6 +22,7 @@ import com.inkqilin.ledger.util.ThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Calendar
 
@@ -361,6 +362,49 @@ class TransactionViewModel(
     val homeCardColor: StateFlow<String?> = themeManager.homeCardColor.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), null
     )
+
+    val homeBgImagePath: StateFlow<String?> = themeManager.homeBgImagePath.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), null
+    )
+
+    val homeBgOpacity: StateFlow<Float> = themeManager.homeBgOpacity.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), 0.35f
+    )
+
+    fun setHomeBgImagePath(path: String?) {
+        viewModelScope.launch { themeManager.setHomeBgImagePath(path) }
+    }
+
+    fun setHomeBgOpacity(opacity: Float) {
+        viewModelScope.launch { themeManager.setHomeBgOpacity(opacity) }
+    }
+
+    /** 将用户选择的图片复制到应用私有目录，避免 content URI 失效 */
+    fun importHomeBackground(context: Context, uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val target = java.io.File(context.filesDir, "home_bg_image")
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    } ?: error("无法读取图片")
+                }
+                setHomeBgImagePath(target.absolutePath)
+            } catch (e: Exception) {
+                Log.e("HomeBg", "导入背景失败", e)
+            }
+        }
+    }
+
+    fun clearHomeBackground() {
+        viewModelScope.launch {
+            val path = homeBgImagePath.value
+            setHomeBgImagePath(null)
+            if (!path.isNullOrBlank()) {
+                runCatching { java.io.File(path).delete() }
+            }
+        }
+    }
 
     val autoRecordEnabled: StateFlow<Boolean> = themeManager.autoRecordEnabled.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), false
