@@ -106,6 +106,9 @@ fun CloudBackupScreen(
     var showRestoreDoneDialog by remember { mutableStateOf(false) }
     var restoreConfirm by remember { mutableStateOf<RestoreConfirm?>(null) }
     var pendingBackup by remember { mutableStateOf<PendingBackup?>(null) }
+    var showSafetyRestoreConfirm by remember { mutableStateOf(false) }
+    var showFileInfo by remember { mutableStateOf(false) }
+    var fileInfoText by remember { mutableStateOf("") }
 
     // 云端
     var cloudBackups by remember { mutableStateOf<List<CosObjectMeta>>(emptyList()) }
@@ -207,10 +210,12 @@ fun CloudBackupScreen(
         }
 
         if (selectedTab == 0) {
+            val hasSafety = remember(localBackups) { CloudBackupManager.hasSafetyCopy(context) }
             LocalBackupSection(
                 lastInfo = lastLocalBackupInfo,
                 backups = localBackups,
                 working = uiState is BackupUiState.Working,
+                hasSafetyCopy = hasSafety,
                 onBackupNow = { pendingBackup = PendingBackup.Local },
                 onRefresh = { refreshLocalList() },
                 onRestore = { restoreConfirm = RestoreConfirm.Local(it) },
@@ -218,6 +223,11 @@ fun CloudBackupScreen(
                 onExport = { file ->
                     exportTarget = file
                     exportLauncher.launch(file.name)
+                },
+                onRestoreSafety = { showSafetyRestoreConfirm = true },
+                onShowFileInfo = {
+                    fileInfoText = CloudBackupManager.describeLocalBackupFiles(context)
+                    showFileInfo = true
                 }
             )
         } else {
@@ -417,6 +427,49 @@ fun CloudBackupScreen(
         )
     }
 
+    if (showSafetyRestoreConfirm) {
+        AlertDialog(
+            onDismissRequest = { showSafetyRestoreConfirm = false },
+            title = { Text("从安全副本恢复") },
+            text = {
+                Text("将用最近一次「恢复操作前」自动保存的库文件覆盖当前账本。仅当你确认当前数据异常时使用。完成后会关闭应用。")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showSafetyRestoreConfirm = false
+                    uiState = BackupUiState.Working
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                CloudBackupManager.restoreFromSafetyCopy(context)
+                            }
+                            (context as? android.app.Activity)?.finishAffinity()
+                            android.os.Process.killProcess(android.os.Process.myPid())
+                        } catch (e: Exception) {
+                            uiState = BackupUiState.Error(e.message ?: "安全副本恢复失败")
+                        }
+                    }
+                }) { Text("覆盖并重启") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSafetyRestoreConfirm = false }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showFileInfo) {
+        AlertDialog(
+            onDismissRequest = { showFileInfo = false },
+            title = { Text("本机备份相关文件") },
+            text = {
+                Text(fileInfoText, fontSize = 12.sp)
+            },
+            confirmButton = {
+                TextButton(onClick = { showFileInfo = false }) { Text("关闭") }
+            }
+        )
+    }
+
     if (showRestoreDoneDialog) {
         AlertDialog(
             onDismissRequest = { },
@@ -444,11 +497,14 @@ private fun ColumnScope.LocalBackupSection(
     lastInfo: String?,
     backups: List<File>,
     working: Boolean,
+    hasSafetyCopy: Boolean,
     onBackupNow: () -> Unit,
     onRefresh: () -> Unit,
     onRestore: (File) -> Unit,
     onDelete: (File) -> Unit,
-    onExport: (File) -> Unit
+    onExport: (File) -> Unit,
+    onRestoreSafety: () -> Unit,
+    onShowFileInfo: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -471,6 +527,21 @@ private fun ColumnScope.LocalBackupSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onBackupNow, enabled = !working) { Text("立即本地备份") }
                 OutlinedButton(onClick = onRefresh, enabled = !working) { Text("刷新") }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onRestoreSafety, enabled = hasSafetyCopy && !working) {
+                    Text(if (hasSafetyCopy) "从安全副本恢复" else "无安全副本")
+                }
+                OutlinedButton(onClick = onShowFileInfo) { Text("本机文件信息") }
+            }
+            if (hasSafetyCopy) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "检测到「恢复前安全副本」，若当前账本异常可用它回滚。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }

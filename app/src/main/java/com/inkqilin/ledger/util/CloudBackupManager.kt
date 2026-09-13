@@ -255,6 +255,48 @@ object CloudBackupManager {
             ?: emptyList()
     }
 
+    // ── 恢复前安全副本 / 救灾 ──
+
+    fun safetyBackupFile(context: Context): File =
+        File(File(localBackupDir(context), "pre_restore"), "ledger_database_safety.db")
+
+    fun hasSafetyCopy(context: Context): Boolean {
+        val f = safetyBackupFile(context)
+        return f.exists() && f.length() > 100
+    }
+
+    /**
+     * 用恢复前安全副本直接覆盖当前库（救灾用）。
+     * 仅在确认当前库异常时使用。
+     */
+    fun restoreFromSafetyCopy(context: Context) {
+        val safety = safetyBackupFile(context)
+        if (!safety.exists()) error("没有找到恢复前安全副本")
+        val bytes = safety.readBytes()
+        if (bytes.size < 100 || !hasSqliteMagic(bytes)) {
+            error("安全副本不是有效 SQLite，无法恢复")
+        }
+        val dbFile = context.getDatabasePath(DB_NAME)
+        val wal = context.getDatabasePath("$DB_NAME-wal")
+        val shm = context.getDatabasePath("$DB_NAME-shm")
+        AppDatabase.closeAndClear()
+        dbFile.parentFile?.mkdirs()
+        wal.delete()
+        shm.delete()
+        dbFile.outputStream().use { it.write(bytes) }
+    }
+
+    /** 调试/救灾：列出备份相关目录下的文件名 */
+    fun describeLocalBackupFiles(context: Context): String {
+        val dir = localBackupDir(context)
+        val pre = File(dir, "pre_restore")
+        val zips = listLocalBackups(context).joinToString { it.name }
+        val pres = (pre.listFiles()?.joinToString { "${it.name}(${it.length()})" } ?: "无")
+        val db = context.getDatabasePath(DB_NAME)
+        val dbInfo = if (db.exists()) "${db.length()} bytes" else "不存在"
+        return "当前库: $dbInfo\n本地 zip: ${zips.ifBlank { "无" }}\n安全副本目录: $pres"
+    }
+
     fun restoreLocalBackup(context: Context, file: File, password: CharArray? = null) {
         if (!file.exists()) error("本地备份文件不存在")
         val raw = file.readBytes()
